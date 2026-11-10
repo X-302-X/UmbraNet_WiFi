@@ -1,0 +1,75 @@
+<!doctype html>
+<html lang="ru" data-surface="transparent">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>UmbraNet_WiFi</title>
+  <link rel="stylesheet" href="styles/base.css">
+  <link rel="stylesheet" href="styles/motion.css">
+  <link rel="stylesheet" href="styles/shell.css">
+  <script defer src="components/navigation.js"></script>
+  <script defer src="components/appearance.js"></script>
+</head>
+<body>
+<div class="app">
+  <div class="ambient-motion" aria-hidden="true">
+    <span class="ambient-glow glow-one"></span><span class="ambient-glow glow-two"></span>
+    <span class="particle particle-one"></span><span class="particle particle-two"></span>
+    <span class="particle particle-three"></span><span class="particle particle-four"></span>
+    <span class="particle particle-five"></span><span class="particle particle-six"></span>
+    <span class="particle particle-seven"></span><span class="particle particle-eight"></span>
+  </div>
+  <aside class="sidebar">
+    <div class="brand"><span>✦</span> UMBRANET <small>/ WIFI</small></div>
+    <p class="eyebrow sidebar-label">НАВИГАЦИЯ</p>
+    <p class="nav-hint" id="reorder-hint">Перетащи вкладки мышью<br>или используй Alt + ↑ / ↓</p>
+    <nav id="navigation" aria-label="Страницы" aria-describedby="reorder-hint">
+      <button type="button" class="nav-item selected" data-page="routing" draggable="true" aria-current="page"><span aria-hidden="true">◈</span>Маршрутизация</button>
+      <button type="button" class="nav-item" data-page="vpn" draggable="true"><span aria-hidden="true">◉</span>VPN / серверы</button>
+      <button type="button" class="nav-item" data-page="ai" draggable="true"><span aria-hidden="true">✧</span>AI-стратегии</button>
+      <button type="button" class="nav-item" data-page="logs" draggable="true"><span aria-hidden="true">≡</span>Логи</button>
+      <button type="button" class="nav-item" data-page="settings" draggable="true"><span aria-hidden="true">⚙</span>Настройки</button>
+      <button type="button" class="nav-item" data-page="about" draggable="true"><span aria-hidden="true">ⓘ</span>О программе</button>
+    </nav>
+    <div class="sidebar-footer card"><b>✦ &nbsp;UMBRA</b><span>Оконный каркас</span><span>Сеть не подключена</span></div>
+  </aside>
+  <main class="main">
+    <section class="page" id="routing" aria-labelledby="routing-title">
+      <div class="page-heading"><div><p class="eyebrow">UMBRA / МАРШРУТИЗАЦИЯ</p><h1 id="routing-title">Всё под контролем</h1><p class="subtitle">Новый интерфейс UmbraNet_WiFi</p></div><span class="badge">● &nbsp;КАРКАС</span></div>
+      <div class="hero card"><div class="hero-copy"><p class="eyebrow purple">НОВОЕ НАЧАЛО</p><h2>Пространство для свободы</h2><p>Интерфейс готов к знакомству.<br>Сетевые механизмы ещё не подключены.</p><button class="primary" type="button" data-open="settings">Настроить оформление &nbsp;→</button></div><div class="orb" aria-hidden="true"><div><div>✦</div></div></div></div>
+      <div class="metrics"><div class="metric card"><span>СОСТОЯНИЕ</span><strong class="purple">Не подключено</strong><small>Ядро ещё не реализовано</small></div><div class="metric card"><span>МАРШРУТИЗАЦИЯ</span><strong class="cyan">Ожидает</strong><small>Системные настройки не меняются</small></div><div class="metric card"><span>ВНЕШНИЙ ВИД</span><strong class="pink">Настраивается</strong><small>Цвет и прозрачность фона</small></div></div>
+      <div class="info card"><h3>Пока это только каркас</h3><p>Здесь появятся режимы, сервисы и правила маршрутизации. Сейчас приложение не подключается к сети и не меняет её настройки.</p></div>
+    </section>
+    <section class="page" id="vpn" aria-labelledby="vpn-title" hidden>
+      <p class="eyebrow">UMBRA / СОЕДИНЕНИЯ</p><h1 id="vpn-title">VPN / серверы</h1><p class="subtitle">Будущее пространство для серверов и подключений.</p>
+      <div class="empty-state card"><div class="empty-icon">◉</div><h2>Механизмы ещё не подключены</h2><p>Добавление серверов и управление соединениями появятся на следующих этапах. Сейчас активного VPN-подключения здесь нет.</p></div>
+    </section>
+    <section class="page" id="ai" aria-labelledby="ai-title" hidden>
+      <p class="eyebrow">UMBRA / СТРАТЕГИИ</p><h1 id="ai-title">AI-стратегии</h1><p class="subtitle">Пространство для поиска и проверки стратегий.</p>
+      <div class="empty-state card"><div class="empty-icon">✧</div><h2>Лаборатория ещё не подключена</h2><p>Генерация и проверка DPI-стратегий появятся позже. Сейчас тестирование не выполняется.</p></div>
+    </section>
+    <section class="page" id="logs" aria-labelledby="logs-title" hidden>
+      <p class="eyebrow">UMBRA / ЖУРНАЛ</p><h1 id="logs-title">Логи</h1><p class="subtitle">События и диагностика приложения.</p>
+      <div class="empty-state card"><div class="empty-icon">≡</div><h2>Журнал ещё не подключён</h2><p>Это оконный каркас: запись и просмотр логов пока не реализованы. Для логов приложения предусмотрена папка logs.</p></div>
+    </section>
+    <section class="page" id="settings" aria-labelledby="settings-title" hidden>
+      <p class="eyebrow">UMBRA / НАСТРОЙКИ</p><h1 id="settings-title">Сделай пространство своим</h1><p class="subtitle">Оформление меняется сразу, без перезапуска.</p>
+      <div class="settings-card card live-settings">
+        <div class="live-heading"><div><h3>Живое оформление</h3><p>Только фон и акцентные элементы</p></div><button type="button" class="reset-button" id="reset-appearance">Сбросить</button></div>
+        <div class="setting-control"><div class="control-heading"><label for="background-transparency">Прозрачность фона</label><output id="transparency-value" for="background-transparency">32%</output></div><input id="background-transparency" type="range" min="0" max="100" step="1" value="32"><p>Текст, кнопки и карточки остаются непрозрачными.</p></div>
+        <div class="setting-control"><label for="accent-color">Акцентный цвет</label><p>Выбери оттенок или свой цвет</p><div class="palette" role="group" aria-label="Акцентные цвета">
+          <button type="button" class="swatch violet" data-accent="#a578ff" aria-label="Фиолетовый" aria-pressed="true"></button><button type="button" class="swatch blue" data-accent="#70e4f3" aria-label="Голубой" aria-pressed="false"></button><button type="button" class="swatch pink" data-accent="#e194e9" aria-label="Розовый" aria-pressed="false"></button><button type="button" class="swatch green" data-accent="#8fe4c5" aria-label="Мятный" aria-pressed="false"></button><button type="button" class="swatch orange" data-accent="#ffb56b" aria-label="Оранжевый" aria-pressed="false"></button><input id="accent-color" type="color" value="#a578ff" aria-label="Свой акцентный цвет">
+        </div></div>
+      </div>
+      <div class="settings-card card"><h3>Эффекты интерфейса</h3><div class="settings-row"><div><h4>Неоновые акценты</h4><p>Декоративное свечение и частицы</p></div><button class="toggle active" type="button" id="glow-toggle" aria-label="Неоновые акценты" aria-pressed="true"><span></span></button></div><div class="settings-row"><div><h4>Анимации</h4><p>Движение фона и элементов</p></div><button class="toggle active" type="button" id="motion-toggle" aria-label="Анимации" aria-pressed="true"><span></span></button></div></div>
+      <div class="info card"><h3>Настройки каркаса</h3><p>Оформление сохраняется локально для текущего пользователя. Остальные настройки приложения появятся по мере подключения механизмов.</p></div>
+    </section>
+    <section class="page" id="about" aria-labelledby="about-title" hidden>
+      <p class="eyebrow">UMBRA / О ПРОЕКТЕ</p><h1 id="about-title">UmbraNet_WiFi</h1><p class="subtitle">Перерождение UmbraNet.</p>
+      <div class="empty-state card"><div class="empty-icon">✦</div><h2>Новый взгляд на знакомое</h2><p>Первый оконный каркас на Tauri и WebView2. Сетевые механизмы ещё не подключены; это не готовая версия программы.</p><span class="badge">РАННИЙ КАРКАС · 0.1.0</span></div>
+    </section>
+  </main>
+  <div id="announcer" class="sr-only" aria-live="polite"></div>
+</div>
+</body>
+</html>

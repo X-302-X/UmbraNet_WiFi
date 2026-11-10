@@ -1,0 +1,211 @@
+/* Decorative animation stress test. All movement can be disabled in Settings. */
+.app {
+  position: relative;
+  isolation: isolate;
+}
+.sidebar,
+.main {
+  position: relative;
+  z-index: 1;
+}
+.ambient-motion {
+  position: absolute;
+  inset: 0;
+  z-index: 0;
+  overflow: hidden;
+  pointer-events: none;
+}
+.no-glow .ambient-motion {
+  display: none;
+}
+.ambient-glow {
+  position: absolute;
+  width: 42%;
+  aspect-ratio: 1;
+  border-radius: 50%;
+  opacity: 0.52;
+  background: radial-gradient(circle, color-mix(in srgb, var(--purple) 20%, transparent), transparent 68%);
+  animation: glow-drift 9s ease-in-out infinite alternate;
+}
+.glow-one {
+  top: -22%;
+  right: -8%;
+}
+.glow-two {
+  bottom: -38%;
+  left: 5%;
+  background: radial-gradient(circle, #70e4f328, transparent 68%);
+  animation-duration: 12s;
+  animation-delay: -4s;
+}
+.particle {
+  position: absolute;
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: var(--purple);
+  box-shadow: 0 0 12px 2px var(--purple);
+  opacity: 0.45;
+  animation: particle-drift 5s ease-in-out infinite alternate;
+}
+.particle-one { left: 24%; top: 14%; animation-delay: -1.3s; }
+.particle-two { left: 35%; top: 74%; animation-delay: -3s; animation-duration: 7s; }
+.particle-three { left: 53%; top: 25%; animation-delay: -2.1s; animation-duration: 6s; }
+.particle-four { left: 70%; top: 65%; animation-delay: -4s; animation-duration: 8s; }
+.particle-five { left: 82%; top: 18%; animation-delay: -0.7s; animation-duration: 6.5s; }
+.particle-six { left: 91%; top: 80%; animation-delay: -2.8s; animation-duration: 7.5s; }
+.particle-seven { left: 45%; top: 51%; animation-delay: -1.5s; animation-duration: 5.5s; }
+.particle-eight { left: 76%; top: 41%; animation-delay: -3.6s; animation-duration: 6.2s; }
+
+.page {
+  animation: page-enter 0.36s cubic-bezier(0.2, 0.75, 0.2, 1) both;
+}
+.nav-item.selected::before {
+  animation: indicator-glow 2.4s ease-in-out infinite alternate;
+}
+.nav-item span {
+  transition: color 0.2s ease, transform 0.2s ease;
+}
+.nav-item:hover span {
+  transform: scale(1.17) rotate(-8deg);
+}
+.badge {
+  animation: badge-breathe 2.8s ease-in-out infinite;
+}
+.hero {
+  animation: hero-breathe 4s ease-in-out infinite alternate;
+}
+.orb::before {
+  content: "";
+  position: absolute;
+  inset: 25px;
+  border: 1px dashed color-mix(in srgb, var(--purple) 50%, transparent);
+  border-radius: 50%;
+  animation: orbit-spin 13s linear infinite;
+}
+.orb > div {
+  animation: orbit-breathe 4.2s ease-in-out infinite;
+}
+.orb > div > div {
+  animation: star-glow 3s ease-in-out infinite alternate;
+}
+.primary {
+  transition: transform 0.16s ease, filter 0.16s ease, box-shadow 0.16s ease;
+}
+.primary:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 5px 18px color-mix(in srgb, var(--purple) 40%, transparent);
+}
+.primary:active {
+  transform: translateY(0) scale(0.97);
+}
+.metric {
+  animation: card-float 5s ease-in-out infinite;
+  transition: border-color 0.2s ease, box-shadow 0.2s ease;
+}
+.metric:nth-child(2) { animation-delay: -1.7s; }
+.metric:nth-child(3) { animation-delay: -3.4s; }
+.metric:hover,
+.service:hover {
+  border-color: color-mix(in srgb, var(--purple) 65%, transparent);
+  box-shadow: 0 0 18px color-mix(in srgb, var(--purple) 14%, transparent);
+}
+.service {
+  border: 1px solid transparent;
+  transition: border-color 0.2s ease, box-shadow 0.2s ease, translate 0.2s ease;
+}
+.service:hover {
+  translate: 3px 0;
+}
+.service-icon {
+  animation: service-breathe 3.8s ease-in-out infinite alternate;
+}
+.service:nth-child(2n) .service-icon { animation-delay: -1.3s; }
+.service:nth-child(3n) .service-icon { animation-delay: -2.6s; }
+.toggle:enabled {
+  transition: background 0.16s ease, box-shadow 0.16s ease, scale 0.16s ease;
+}
+.toggle:enabled:hover {
+  scale: 1.08;
+  box-shadow: 0 0 14px color-mix(in srgb, var(--purple) 35%, transparent);
+}
+.toggle:enabled:active {
+  scale: 0.94;
+}
+.motion-showcase {
+  margin-top: 12px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  color: var(--muted);
+  font-size: 10px;
+}
+.motion-bars {
+  height: 24px;
+  display: flex;
+  align-items: flex-end;
+  gap: 3px;
+}
+.motion-bars i {
+  display: block;
+  width: 4px;
+  height: 20px;
+  border-radius: 4px;
+  background: var(--purple);
+  transform-origin: bottom;
+  animation: bar-wave 0.9s ease-in-out infinite alternate;
+}
+.motion-bars i:nth-child(2) { animation-delay: -0.15s; }
+.motion-bars i:nth-child(3) { animation-delay: -0.3s; }
+.motion-bars i:nth-child(4) { animation-delay: -0.45s; }
+.motion-bars i:nth-child(5) { animation-delay: -0.6s; }
+.motion-bars i:nth-child(6) { animation-delay: -0.75s; }
+.motion-bars i:nth-child(7) { animation-delay: -0.85s; }
+
+@keyframes glow-drift {
+  from { transform: translate(-4%, -3%) scale(0.9); opacity: 0.35; }
+  to { transform: translate(8%, 6%) scale(1.12); opacity: 0.7; }
+}
+@keyframes particle-drift {
+  from { transform: translate(0, 0) scale(0.7); opacity: 0.18; }
+  to { transform: translate(22px, -28px) scale(1.3); opacity: 0.8; }
+}
+@keyframes page-enter {
+  from { opacity: 0.55; transform: translateY(8px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+@keyframes indicator-glow {
+  from { box-shadow: 0 0 4px var(--purple); }
+  to { box-shadow: 0 0 16px 3px var(--purple); }
+}
+@keyframes badge-breathe {
+  0%, 100% { opacity: 0.72; }
+  50% { opacity: 1; }
+}
+@keyframes hero-breathe {
+  from { border-color: var(--border); }
+  to { border-color: color-mix(in srgb, var(--purple) 55%, var(--border)); }
+}
+@keyframes orbit-spin {
+  to { transform: rotate(360deg); }
+}
+@keyframes orbit-breathe {
+  0%, 100% { transform: scale(0.92); }
+  50% { transform: scale(1.04); }
+}
+@keyframes star-glow {
+  from { box-shadow: 0 0 4px color-mix(in srgb, var(--purple) 30%, transparent); }
+  to { box-shadow: 0 0 24px color-mix(in srgb, var(--purple) 55%, transparent); }
+}
+@keyframes card-float {
+  0%, 100% { transform: translateY(0); }
+  50% { transform: translateY(-3px); }
+}
+@keyframes service-breathe {
+  from { box-shadow: 0 0 0 transparent; }
+  to { box-shadow: 0 0 12px color-mix(in srgb, var(--accent) 30%, transparent); }
+}
+@keyframes bar-wave {
+  from { transform: scaleY(0.2); opacity: 0.55; }
+  to { transform: scaleY(1); opacity: 1; }
+}
