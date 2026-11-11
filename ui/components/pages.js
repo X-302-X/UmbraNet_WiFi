@@ -19,6 +19,24 @@
     empty.hidden = found !== 0;
   });
 
+  // Visual selection only: no networking or persistent configuration yet.
+  for (const button of document.querySelectorAll("[data-mode]")) {
+    button.addEventListener("click", () => {
+      for (const other of document.querySelectorAll("[data-mode]")) {
+        other.setAttribute("aria-pressed", String(other === button));
+      }
+    });
+  }
+
+  for (const button of document.querySelectorAll(".catalog-row .toggle, .catalog-row .favorite")) {
+    button.addEventListener("click", () => {
+      const selected = button.getAttribute("aria-pressed") !== "true";
+      button.setAttribute("aria-pressed", String(selected));
+      button.classList.toggle("active", selected);
+      if (button.classList.contains("favorite")) button.textContent = selected ? "★" : "☆";
+    });
+  }
+
   const subtabs = [...document.querySelectorAll("[data-group][data-panel]")];
   for (const tab of subtabs) {
     tab.addEventListener("click", () => {
