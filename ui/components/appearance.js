@@ -2,7 +2,7 @@
 
 (() => {
   const key = "umbranet-wifi.appearance.v1";
-  const defaults = { transparency: 32, accent: "#a578ff", glow: true, motion: true };
+  const defaults = { transparency: 32, accent: "#8b6dff", glow: true, motion: true };
   const root = document.documentElement;
   const app = document.querySelector(".app");
   const slider = document.querySelector("#background-transparency");

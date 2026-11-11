@@ -1,16 +1,16 @@
 :root {
   color-scheme: dark;
-  --text: #f4f1ff;
-  --muted: #a0a0b6;
-  --faint: #77788f;
-  --purple: #a578ff;
+  --text: #edeef5;
+  --muted: #9b9cbd;
+  --faint: #77799c;
+  --purple: #8b6dff;
   --accent-foreground: #171024;
   --background-opacity: 0.68;
-  --cyan: #70e4f3;
-  --pink: #e194e9;
-  --border: #35334d;
-  --surface: #191925;
-  --bg: #151520;
+  --cyan: #34dcf0;
+  --pink: #f259b0;
+  --border: #302b46;
+  --surface: #12121e;
+  --bg: #06060c;
 }
 * {
   box-sizing: border-box;
@@ -470,11 +470,11 @@ html[data-surface="transparent"] .app,
 html[data-surface="acrylic"] .app {
   background:
     radial-gradient(circle at 96% -20%, rgba(33, 28, 59, calc(var(--background-opacity) * 0.7)) 0, transparent 40%),
-    rgba(21, 21, 32, var(--background-opacity));
+    rgba(6, 6, 12, var(--background-opacity));
 }
 html[data-surface="transparent"] .app.no-glow,
 html[data-surface="acrylic"] .app.no-glow {
-  background: rgba(21, 21, 32, var(--background-opacity));
+  background: rgba(6, 6, 12, var(--background-opacity));
 }
 
 /* Live appearance controls affect only the test's background and accents. */
@@ -544,7 +544,7 @@ html[data-surface="acrylic"] .app.no-glow {
   outline: 2px solid var(--purple);
   outline-offset: 2px;
 }
-.swatch.violet { background: #a578ff; }
+.swatch.violet { background: #8b6dff; }
 .swatch.blue { background: #70e4f3; }
 .swatch.pink { background: #e194e9; }
 .swatch.green { background: #8fe4c5; }
