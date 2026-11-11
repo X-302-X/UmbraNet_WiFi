@@ -6,7 +6,8 @@
   const panel = document.querySelector(".task-panel");
   const key = "umbranet-wifi.dispatcher-height.v1";
   const minimum = 80;
-  const catalogMinimum = 120;
+  const title = container.querySelector(".page-title");
+  const catalogMinimum = () => 130 + (title ? title.offsetHeight : 0);
   let preferred = 175;
   let drag = null;
 
@@ -18,7 +19,7 @@
   function updateHeight() {
     const available = container.clientHeight;
     if (!available) return;
-    const maximum = Math.max(minimum, available - catalogMinimum);
+    const maximum = Math.max(minimum, available - catalogMinimum());
     const height = Math.max(minimum, Math.min(maximum, preferred));
     panel.style.setProperty("--dispatcher-height", `${height}px`);
     handle.setAttribute("aria-valuemax", String(Math.round(maximum)));
@@ -38,7 +39,7 @@
   });
   handle.addEventListener("pointermove", event => {
     if (!drag || drag.pointerId !== event.pointerId) return;
-    const maximum = Math.max(minimum, container.clientHeight - catalogMinimum);
+    const maximum = Math.max(minimum, container.clientHeight - catalogMinimum());
     preferred = Math.max(minimum, Math.min(maximum, drag.height + drag.y - event.clientY));
     updateHeight();
     event.preventDefault();
@@ -53,7 +54,7 @@
   handle.addEventListener("keydown", event => {
     if (!["ArrowUp", "ArrowDown", "Home", "End"].includes(event.key)) return;
     event.preventDefault();
-    const maximum = Math.max(minimum, container.clientHeight - catalogMinimum);
+    const maximum = Math.max(minimum, container.clientHeight - catalogMinimum());
     const current = panel.getBoundingClientRect().height;
     if (event.key === "Home") preferred = minimum;
     else if (event.key === "End") preferred = maximum;

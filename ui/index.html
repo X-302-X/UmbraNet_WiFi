@@ -9,6 +9,7 @@
   <link rel="stylesheet" href="styles/shell.css">
   <link rel="stylesheet" href="styles/pages.css">
   <script defer src="components/navigation.js"></script>
+  <script defer src="components/sidebar.js"></script>
   <script defer src="components/appearance.js"></script>
   <script defer src="components/pages.js"></script>
   <script defer src="components/dispatcher.js"></script>
@@ -23,16 +24,17 @@
     <span class="particle particle-seven"></span><span class="particle particle-eight"></span>
   </div>
   <aside class="sidebar">
-    <div class="brand"><span class="brand-word"><span class="brand-initial">U</span>mbraNet</span></div>
+    <div class="brand"><span class="brand-word" aria-label="UmbraNet"><span class="brand-initial">U</span><span class="brand-rest">mbraNet</span></span></div>
     <p class="eyebrow sidebar-label">НАВИГАЦИЯ</p>
     <nav id="navigation" aria-label="Страницы">
-      <button type="button" class="nav-item selected" data-page="routing" draggable="true" aria-current="page"><span class="nav-emoji" aria-hidden="true">🔀</span>Маршрутизация</button>
-      <button type="button" class="nav-item" data-page="vpn" draggable="true"><span class="nav-emoji" aria-hidden="true">👁️</span>VPN / серверы</button>
-      <button type="button" class="nav-item" data-page="ai" draggable="true"><span class="nav-emoji" aria-hidden="true">🧪</span>AI-стратегии</button>
-      <button type="button" class="nav-item" data-page="logs" draggable="true"><span class="nav-emoji" aria-hidden="true">📑</span>Логи</button>
-      <button type="button" class="nav-item" data-page="settings" draggable="true"><span class="nav-emoji" aria-hidden="true">⚙️</span>Настройки</button>
-      <button type="button" class="nav-item" data-page="about" draggable="true"><span class="nav-emoji" aria-hidden="true">ℹ️</span>О программе</button>
+      <button type="button" class="nav-item selected" data-page="routing" draggable="true" aria-current="page"><span class="nav-emoji" aria-hidden="true">🔀</span><span class="nav-label">Маршрутизация</span></button>
+      <button type="button" class="nav-item" data-page="vpn" draggable="true"><span class="nav-emoji" aria-hidden="true">👁️</span><span class="nav-label">VPN / серверы</span></button>
+      <button type="button" class="nav-item" data-page="ai" draggable="true"><span class="nav-emoji" aria-hidden="true">🧪</span><span class="nav-label">AI-стратегии</span></button>
+      <button type="button" class="nav-item" data-page="logs" draggable="true"><span class="nav-emoji" aria-hidden="true">📑</span><span class="nav-label">Логи</span></button>
+      <button type="button" class="nav-item" data-page="settings" draggable="true"><span class="nav-emoji" aria-hidden="true">⚙️</span><span class="nav-label">Настройки</span></button>
+      <button type="button" class="nav-item" data-page="about" draggable="true"><span class="nav-emoji" aria-hidden="true">ℹ️</span><span class="nav-label">О программе</span></button>
     </nav>
+    <button id="sidebar-toggle" class="sidebar-toggle" type="button" aria-label="Свернуть меню" aria-expanded="true" aria-controls="navigation">«</button>
   </aside>
   <main class="main">
     <div class="shell-topbar">
@@ -47,9 +49,9 @@
       </div>
     </div>
     <section class="page" id="routing" aria-labelledby="routing-title">
-      <div class="page-title"><h1 id="routing-title">Сервисы</h1></div>
       <div class="routing-layout">
         <div class="routing-main">
+          <div class="page-title"><h1 id="routing-title">Сервисы</h1></div>
           <div class="catalog-panel">
             <label class="sr-only" for="catalog-search">Найти сервис</label><input class="field" id="catalog-search" type="search" placeholder="🔍 Найти сервис: ChatGPT, GitHub, Discord…">
             <div id="catalog-list" class="catalog-list"><div class="catalog-group"><h4>AI</h4><div class="catalog-row" data-service="chatgpt / openai"><span class="service-symbol">🤖</span><strong>ChatGPT / OpenAI</strong><button type="button" class="favorite" aria-pressed="false" aria-label="В избранное: ChatGPT / OpenAI">☆</button><button class="toggle" type="button" aria-label="Включить: ChatGPT / OpenAI" aria-pressed="false"><span></span></button></div><div class="catalog-row" data-service="claude (anthropic)"><span class="service-symbol">🧠</span><strong>Claude (Anthropic)</strong><button type="button" class="favorite" aria-pressed="false" aria-label="В избранное: Claude (Anthropic)">☆</button><button class="toggle" type="button" aria-label="Включить: Claude (Anthropic)" aria-pressed="false"><span></span></button></div><div class="catalog-row" data-service="google gemini"><span class="service-symbol">✨</span><strong>Google Gemini</strong><button type="button" class="favorite" aria-pressed="false" aria-label="В избранное: Google Gemini">☆</button><button class="toggle" type="button" aria-label="Включить: Google Gemini" aria-pressed="false"><span></span></button></div><div class="catalog-row" data-service="grok (xai)"><span class="service-symbol">🦾</span><strong>Grok (xAI)</strong><button type="button" class="favorite" aria-pressed="false" aria-label="В избранное: Grok (xAI)">☆</button><button class="toggle" type="button" aria-label="Включить: Grok (xAI)" aria-pressed="false"><span></span></button></div><div class="catalog-row" data-service="perplexity"><span class="service-symbol">🔮</span><strong>Perplexity</strong><button type="button" class="favorite" aria-pressed="false" aria-label="В избранное: Perplexity">☆</button><button class="toggle" type="button" aria-label="Включить: Perplexity" aria-pressed="false"><span></span></button></div><div class="catalog-row" data-service="deepl"><span class="service-symbol">🌐</span><strong>DeepL</strong><button type="button" class="favorite" aria-pressed="false" aria-label="В избранное: DeepL">☆</button><button class="toggle" type="button" aria-label="Включить: DeepL" aria-pressed="false"><span></span></button></div><div class="catalog-row" data-service="midjourney"><span class="service-symbol">🎨</span><strong>Midjourney</strong><button type="button" class="favorite" aria-pressed="false" aria-label="В избранное: Midjourney">☆</button><button class="toggle" type="button" aria-label="Включить: Midjourney" aria-pressed="false"><span></span></button></div><div class="catalog-row" data-service="deepseek"><span class="service-symbol">🐳</span><strong>DeepSeek</strong><button type="button" class="favorite" aria-pressed="false" aria-label="В избранное: DeepSeek">☆</button><button class="toggle" type="button" aria-label="Включить: DeepSeek" aria-pressed="false"><span></span></button></div></div>

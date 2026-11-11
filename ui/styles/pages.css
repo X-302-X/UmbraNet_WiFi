@@ -156,3 +156,8 @@
   border-color: #3c3558;
   opacity: .7;
 }
+
+/* Match the original header proportions and align the route picker with the page title. */
+.topbar-actions .action-restart { min-width: 124px; font-size: 13px; }
+.topbar-actions .action-start { min-width: 140px; font-size: 13px; }
+#routing .routing-layout { flex: 1; min-height: 0; }

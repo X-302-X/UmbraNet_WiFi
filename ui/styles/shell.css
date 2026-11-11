@@ -20,3 +20,21 @@
 .brand .brand-initial { color: var(--purple); font-size: inherit; }
 .nav-item { padding: 0 10px; }
 .nav-item span { margin-right: 3px; }
+
+/* Sidebar keeps icons aligned while its width changes. */
+.sidebar { overflow: hidden; transition: width .18s ease-in-out; }
+.sidebar.collapsed { width: 68px; }
+.brand { padding-left: 10px; overflow: hidden; }
+.brand .brand-word { font-size: 23px; font-weight: 800; }
+.brand .brand-rest { color: var(--text); font-size: inherit; }
+.sidebar.collapsed .brand-rest { display: none; }
+.sidebar.collapsed .sidebar-label { visibility: hidden; }
+.nav-item .nav-label { display: inline; width: auto; margin: 0; font-size: inherit; color: inherit; }
+.sidebar.collapsed .nav-label { display: none; }
+.sidebar-toggle { flex: none; height: 40px; width: 100%; margin-top: auto; border: 1px solid var(--border); border-radius: 10px; background: var(--surface); color: var(--muted); font-size: 20px; font-weight: 700; }
+.sidebar-toggle:hover { border-color: var(--purple); color: var(--text); }
+.nav-item.selected .nav-label { color: var(--text); }
+.brand { padding-left: 11px; }
+.sidebar.collapsed #navigation { grid-template-columns: minmax(0, 1fr); overflow-x: hidden; }
+.sidebar.collapsed .nav-item { min-width: 0; width: 100%; padding: 0 0 0 10px; overflow: hidden; }
+.sidebar.collapsed .nav-emoji { margin-right: 0; }
