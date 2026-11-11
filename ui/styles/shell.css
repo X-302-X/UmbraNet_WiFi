@@ -1,4 +1,4 @@
-.sidebar { width: 215px; min-height: 0; }
+.sidebar { width: 190px; min-height: 0; }
 .sidebar-label { margin-bottom: 5px; }
 .nav-hint { margin: 0 12px 13px; font-size: 10px; line-height: 1.5; color: var(--muted); }
 #navigation { min-height: 0; overflow-y: auto; scrollbar-width: thin; }
@@ -12,6 +12,11 @@
 .empty-icon { color: var(--purple); font-size: 36px; line-height: 1; text-shadow: 0 0 18px color-mix(in srgb, var(--purple) 50%, transparent); }
 .empty-state .badge { margin-top: 10px; }
 .sr-only { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0,0,0,0); white-space: nowrap; border: 0; }
-@media (max-width: 900px) { .sidebar { width: 190px; } .nav-item { padding: 0 10px; } .nav-item span { margin-right: 3px; } }
+
 @media (max-width: 800px) { .orb { opacity: .45; right: -45px; } .metric { padding: 12px; } .metric strong { font-size: 15px; } }
 @media (max-height: 650px) { .sidebar-footer { display: none; } }
+
+.brand .brand-word { color: var(--text); font-size: 17px; font-weight: 700; letter-spacing: 0; white-space: nowrap; }
+.brand .brand-initial { color: var(--purple); font-size: inherit; }
+.nav-item { padding: 0 10px; }
+.nav-item span { margin-right: 3px; }

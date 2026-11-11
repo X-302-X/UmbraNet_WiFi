@@ -457,17 +457,7 @@ nav {
   animation: none !important;
   transition: none !important;
 }
-@media (max-width: 900px) {
-  .sidebar {
-    width: 165px;
-  }
-  .main {
-    padding: 20px;
-  }
-  .orb {
-    right: 10px;
-  }
-}
+
 
 /* Transparency is applied only in the dedicated comparison builds. */
 html[data-surface="transparent"],
