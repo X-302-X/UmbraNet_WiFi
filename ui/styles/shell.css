@@ -38,3 +38,43 @@
 .sidebar.collapsed #navigation { grid-template-columns: minmax(0, 1fr); overflow-x: hidden; }
 .sidebar.collapsed .nav-item { min-width: 0; width: 100%; padding: 0 0 0 10px; overflow: hidden; }
 .sidebar.collapsed .nav-emoji { margin-right: 0; }
+
+/* The navigation column must never create a horizontal scrollbar while widening. */
+#navigation { grid-template-columns: minmax(0, 1fr); overflow-x: hidden; }
+#navigation .nav-item { width: 100%; min-width: 0; overflow: hidden; }
+
+/* A lifted copy follows the cursor; its original slot marks the drop position. */
+#navigation .nav-item.dragging {
+  opacity: .4;
+  border: 1px dashed var(--purple);
+  background: color-mix(in srgb, var(--purple) 12%, #10101b);
+}
+.nav-drag-ghost {
+  position: fixed;
+  z-index: 100;
+  pointer-events: none;
+  margin: 0;
+  opacity: .98;
+  border: 1px solid var(--purple);
+  background: color-mix(in srgb, var(--purple) 24%, #171624);
+  color: var(--text);
+  box-shadow: 0 14px 30px #0009, 0 0 18px color-mix(in srgb, var(--purple) 38%, transparent);
+  animation: nav-lift-wobble .85s ease-in-out infinite alternate;
+}
+.nav-drag-ghost .nav-label { color: var(--text); }
+.nav-drag-ghost.ghost-collapsed { padding: 0 0 0 10px; overflow: hidden; }
+.nav-drag-ghost.ghost-collapsed .nav-label { display: none; }
+.nav-drag-ghost.ghost-collapsed .nav-emoji { margin-right: 0; }
+.nav-drag-ghost.ghost-landing {
+  animation: none;
+  transform: scale(1) rotate(0);
+  transition: left .18s ease-out, top .18s ease-out, width .18s ease-out, opacity .18s ease-out, transform .18s ease-out;
+}
+@keyframes nav-lift-wobble {
+  from { transform: scale(1.04) rotate(-1.2deg); }
+  to { transform: scale(1.04) rotate(1.2deg); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .nav-drag-ghost { animation: none; }
+  .nav-drag-ghost.ghost-landing { transition: none; }
+}
