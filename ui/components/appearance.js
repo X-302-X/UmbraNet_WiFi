@@ -28,17 +28,23 @@
     "sidebar-width": ["sidebarWidth", 175, 230, " px"],
   };
   const groups = {
-    transparency: ["transparency", "panelTransparency", "buttonTransparency", "fieldTransparency"],
+    controls: ["buttonTransparency", "fieldTransparency"],
+    background: ["transparency", "backgroundAnimation", "backgroundSpeed", "particleCount"],
+    panels: ["panelTransparency"],
     colors: ["accent", "glow", "colorSync", "neonTop", "neonBottom", "neonBrightness", "neonSize", "elementGlow"],
-    background: ["backgroundAnimation", "backgroundSpeed", "particleCount"],
-    motion: ["motion", "shake", "shakeStrength", "shakeSpeed", "uiSpeed"],
-    layout: ["textSize", "cornerRadius", "density", "sidebarWidth"],
+    navigation: ["sidebarWidth", "shake", "shakeStrength", "shakeSpeed"],
+    general: ["motion", "uiSpeed", "textSize", "cornerRadius", "density"],
   };
   const root = document.documentElement;
   const app = document.querySelector(".app");
   const colorFields = { "accent-color": "accent", "neon-top": "neonTop", "neon-bottom": "neonBottom" };
   const toggles = { "glow-toggle": "glow", "motion-toggle": "motion", "shake-toggle": "shake" };
   const animations = ["particles", "waves", "fireflies", "stars", "orbits", "off"];
+  const animationSelect = document.querySelector("#animation-select");
+  const animationTrigger = document.querySelector("#background-animation");
+  const animationCurrent = document.querySelector("#animation-current");
+  const animationList = document.querySelector("#animation-options");
+  const animationOptions = [...animationList.querySelectorAll("[role=option]")];
   let state = { ...defaults };
 
   try {
@@ -78,7 +84,9 @@
     document.querySelector("#neon-bottom").value = state.colorSync ? state.neonTop : state.neonBottom;
     document.querySelector("#neon-bottom").disabled = state.colorSync;
     document.querySelector("#color-sync").checked = state.colorSync;
-    document.querySelector("#background-animation").value = state.backgroundAnimation;
+    const selected = animationOptions.find(option => option.dataset.animation === state.backgroundAnimation);
+    animationCurrent.textContent = selected.textContent;
+    for (const option of animationOptions) option.setAttribute("aria-selected", String(option === selected));
     for (const swatch of document.querySelectorAll("[data-accent]")) swatch.setAttribute("aria-pressed", String(swatch.dataset.accent === state.accent));
     for (const [id, prop] of Object.entries(toggles)) {
       const button = document.getElementById(id);
@@ -115,7 +123,56 @@
   for (const swatch of document.querySelectorAll("[data-accent]")) swatch.addEventListener("click", () => { state.accent = swatch.dataset.accent; update(); });
   for (const [id, prop] of Object.entries(toggles)) document.getElementById(id).addEventListener("click", () => { state[prop] = !state[prop]; update(); });
   document.getElementById("color-sync").addEventListener("change", event => { state.colorSync = event.target.checked; update(); });
-  document.getElementById("background-animation").addEventListener("change", event => { if (animations.includes(event.target.value)) state.backgroundAnimation = event.target.value; update(); });
+  function closeAnimationList(restoreFocus = false) {
+    animationList.hidden = true;
+    animationTrigger.setAttribute("aria-expanded", "false");
+    if (restoreFocus) animationTrigger.focus();
+  }
+  function openAnimationList() {
+    animationList.hidden = false;
+    animationTrigger.setAttribute("aria-expanded", "true");
+    const selected = animationOptions.find(option => option.dataset.animation === state.backgroundAnimation);
+    selected.focus({ preventScroll: true });
+    selected.scrollIntoView({ block: "nearest" });
+  }
+  animationTrigger.addEventListener("click", () => {
+    if (animationList.hidden) openAnimationList();
+    else closeAnimationList();
+  });
+  animationTrigger.addEventListener("keydown", event => {
+    if (["ArrowDown", "ArrowUp"].includes(event.key)) {
+      event.preventDefault();
+      openAnimationList();
+    }
+  });
+  animationList.addEventListener("click", event => {
+    const option = event.target.closest("[data-animation]");
+    if (!option || !animations.includes(option.dataset.animation)) return;
+    state.backgroundAnimation = option.dataset.animation;
+    update();
+    closeAnimationList(true);
+  });
+  animationList.addEventListener("keydown", event => {
+    if (event.key === "Escape") { event.preventDefault(); closeAnimationList(true); return; }
+    const index = animationOptions.indexOf(document.activeElement);
+    let next;
+    if (event.key === "ArrowDown") next = (index + 1) % animationOptions.length;
+    else if (event.key === "ArrowUp") next = (index - 1 + animationOptions.length) % animationOptions.length;
+    else if (event.key === "Home") next = 0;
+    else if (event.key === "End") next = animationOptions.length - 1;
+    else return;
+    event.preventDefault();
+    animationOptions[next].focus();
+  });
+  document.addEventListener("pointerdown", event => {
+    if (!animationSelect.contains(event.target)) closeAnimationList();
+  });
+  animationSelect.addEventListener("focusout", event => {
+    if (!animationSelect.contains(event.relatedTarget)) closeAnimationList();
+  });
+  animationSelect.closest("details").addEventListener("toggle", event => {
+    if (!event.target.open) closeAnimationList();
+  });
   for (const button of document.querySelectorAll("[data-reset-group]")) button.addEventListener("click", () => {
     for (const prop of groups[button.dataset.resetGroup]) state[prop] = defaults[prop];
     update();

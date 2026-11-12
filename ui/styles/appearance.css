@@ -94,3 +94,17 @@ html[data-surface="transparent"] .app, html[data-surface="transparent"] .app.no-
 .nav-drag-ghost { box-shadow: 0 14px 30px #0009, 0 0 calc(18px * var(--element-glow, 1)) color-mix(in srgb, var(--purple) 38%, transparent); }
 .service-icon { animation-name: custom-service-glow; }
 @keyframes custom-service-glow { from { box-shadow: 0 0 0 transparent; } to { box-shadow: 0 0 calc(12px * var(--element-glow, 1)) color-mix(in srgb, var(--accent) 30%, transparent); } }
+
+/* Interface labels are not selectable; editable text keeps normal selection. */
+.app { user-select: none; -webkit-user-select: none; }
+input, textarea, [contenteditable="true"] { user-select: text; -webkit-user-select: text; }
+#routing .service-symbol { background: transparent; border: 0; box-shadow: none; }
+
+/* Custom opaque list avoids native white popups on transparent fields. */
+.animation-select { width: 100%; }
+.animation-select-trigger { display: flex; align-items: center; justify-content: space-between; gap: 8px; text-align: left; }
+.animation-options { margin-top: 5px; padding: 5px; border: 1px solid var(--border); border-radius: calc(9px * var(--radius-scale, 1)); background: #151321; box-shadow: 0 10px 24px #0008; }
+.animation-options[hidden] { display: none; }
+.animation-options [role="option"] { display: block; width: 100%; border: 1px solid transparent; border-radius: 6px; padding: 8px 10px; text-align: left; background: transparent; color: var(--text); }
+.animation-options [role="option"]:hover, .animation-options [role="option"]:focus-visible { background: #302b46; outline: none; }
+.animation-options [role="option"][aria-selected="true"] { color: var(--purple); font-weight: 700; }
