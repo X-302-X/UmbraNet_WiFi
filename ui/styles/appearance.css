@@ -1,0 +1,96 @@
+/* The visual settings are grouped at the bottom of the settings page. */
+.appearance-section { margin-top: 28px; padding-bottom: 14px; }
+.appearance-heading { margin-bottom: 14px; }
+.appearance-heading h2 { font-size: calc(21px * var(--font-scale, 1)); margin: 0 0 5px; }
+.appearance-group { margin: 9px 0; border: 1px solid var(--border); border-radius: calc(14px * var(--radius-scale, 1)); background: color-mix(in srgb, #12121e calc(var(--panel-opacity, 1) * 100%), transparent); }
+.appearance-group summary { cursor: pointer; padding: 15px 17px; color: var(--text); font-weight: 700; }
+.appearance-group summary::marker { color: var(--purple); }
+.appearance-content { border-top: 1px solid var(--border); padding: 16px 17px; display: grid; gap: 17px; }
+.appearance-content .hint { margin: -10px 0 0; }
+.appearance-content .group-reset { justify-self: start; }
+.reset-all { margin-top: 10px; }
+.sync-label { display: inline-flex; align-items: center; gap: 9px; font-weight: 600; }
+.sync-label input { width: 16px; height: 16px; accent-color: var(--purple); }
+.color-pair { display: flex; flex-wrap: wrap; gap: 20px; }
+.color-pair label { display: inline-flex; align-items: center; gap: 9px; }
+.color-pair input:disabled { opacity: .55; cursor: not-allowed; }
+
+/* Alpha is applied to backgrounds, never to the entire element or its text. */
+.card, .appearance-group { background-color: color-mix(in srgb, #12121e calc(var(--panel-opacity, 1) * 100%), transparent); }
+#routing .catalog-row { background: color-mix(in srgb, #12121e calc(var(--panel-opacity, 1) * 100%), transparent); }
+#routing .task-panel { background: color-mix(in srgb, #10101b calc(var(--panel-opacity, 1) * 100%), transparent); }
+.action, .reset-button, .sidebar-toggle, .subtab, .picker-row, .mode-switch button:not([aria-pressed="true"]) { background-color: color-mix(in srgb, #171325 calc(var(--button-opacity, 1) * 100%), transparent); }
+.action-start:disabled, .action-accent:disabled { background-color: color-mix(in srgb, #171325 calc(var(--button-opacity, 1) * 100%), transparent); }
+.subtab.active, .picker-row[aria-pressed="true"] { background: color-mix(in srgb, color-mix(in srgb, var(--purple) 22%, #191925) calc(var(--button-opacity, 1) * 100%), transparent); }
+.mode-switch button[aria-pressed="true"] { background: linear-gradient(120deg, color-mix(in srgb, #8b6dff calc(var(--button-opacity, 1) * 100%), transparent), color-mix(in srgb, #5b9bff calc(var(--button-opacity, 1) * 100%), transparent)); }
+.mode-switch button[data-mode="combo"][aria-pressed="true"] { background: linear-gradient(120deg, color-mix(in srgb, #6366f1 calc(var(--button-opacity, 1) * 100%), transparent), color-mix(in srgb, #a855f7 calc(var(--button-opacity, 1) * 100%), transparent)); }
+.mode-switch button[data-mode="dpi"][aria-pressed="true"] { background: linear-gradient(120deg, color-mix(in srgb, #ff6478 calc(var(--button-opacity, 1) * 100%), transparent), color-mix(in srgb, #f59e0b calc(var(--button-opacity, 1) * 100%), transparent)); }
+.field, input[type="color"] { background-color: color-mix(in srgb, #0e0b19 calc(var(--field-opacity, 1) * 100%), transparent); }
+
+/* Independent corner glows and background motion. */
+html[data-surface="transparent"] .app, html[data-surface="transparent"] .app.no-glow { background: rgba(6, 6, 12, var(--background-opacity)); }
+.no-glow .ambient-motion { display: block; }
+.no-glow .ambient-glow { display: none; }
+.ambient-glow { width: var(--neon-size, 42%); opacity: var(--neon-brightness, .52); background: radial-gradient(circle, color-mix(in srgb, var(--neon-top, #8b6dff) 45%, transparent), transparent 68%); animation: neon-drift 9s ease-in-out infinite alternate; }
+.glow-two { background: radial-gradient(circle, color-mix(in srgb, var(--neon-bottom, #8b6dff) 45%, transparent), transparent 68%); animation-duration: 12s; }
+@keyframes neon-drift { from { transform: translate(-4%, -3%) scale(.9); } to { transform: translate(8%, 6%) scale(1.12); } }
+.particle[hidden], .app[data-background-animation="off"] .particle { display: none; }
+.particle { animation-duration: var(--ambient-duration, 5s); }
+.app[data-background-animation="waves"] .particle { width: 200px; height: 80px; border: 1px solid var(--purple); border-radius: 50%; background: transparent; box-shadow: 0 0 20px color-mix(in srgb, var(--purple) 25%, transparent); animation: ambient-wave var(--ambient-duration, 5s) ease-in-out infinite alternate; }
+.app[data-background-animation="fireflies"] .particle { width: 7px; height: 7px; background: #e7ffb1; box-shadow: 0 0 15px 4px #d4ff72; animation: ambient-firefly var(--ambient-duration, 5s) ease-in-out infinite alternate; }
+.app[data-background-animation="stars"] .particle { width: 3px; height: 3px; background: white; box-shadow: 0 0 8px 2px var(--purple); animation: ambient-stars var(--ambient-duration, 5s) ease-in-out infinite alternate; }
+.app[data-background-animation="orbits"] .particle { width: 60px; height: 60px; background: transparent; border: 1px dashed color-mix(in srgb, var(--purple) 80%, transparent); box-shadow: none; animation: ambient-orbit var(--ambient-duration, 5s) linear infinite; }
+@keyframes ambient-wave { from { transform: scale(.35); opacity: 0; } to { transform: scale(1.4); opacity: .45; } }
+@keyframes ambient-firefly { 0% { transform: translate(-10px, 14px); opacity: .15; } 50% { opacity: .85; } 100% { transform: translate(20px, -24px); opacity: .3; } }
+@keyframes ambient-stars { 0%, 100% { opacity: .2; transform: scale(.7); } 50% { opacity: .95; transform: scale(1.8); } }
+@keyframes ambient-orbit { from { transform: rotate(0deg); opacity: .18; } to { transform: rotate(360deg); opacity: .55; } }
+
+.sidebar { width: var(--sidebar-width, 190px); }
+.sidebar.collapsed { width: 68px; }
+#navigation .nav-item { height: calc(46px * var(--density, 1)); }
+.catalog-row { min-height: calc(42px * var(--density, 1)); padding-top: calc(6px * var(--density, 1)); padding-bottom: calc(6px * var(--density, 1)); }
+.panel { padding: calc(16px * var(--density, 1)); }
+.card, .appearance-group { border-radius: calc(16px * var(--radius-scale, 1)); }
+.action, .field, .subtab, .picker-row, .catalog-row, .nav-item, .sidebar-toggle { border-radius: calc(9px * var(--radius-scale, 1)); }
+.toggle, .toggle span, .swatch { border-radius: 999px; }
+.app :is(.nav-item, .sidebar, .action, .primary, .toggle, .service, .metric, .nav-item span) { transition-duration: var(--ui-duration, .16s); }
+.nav-drag-ghost { animation: nav-micro-shake var(--shake-duration, .35s) linear infinite; }
+.no-shake .nav-drag-ghost { animation: none; transform: scale(1.04); }
+@keyframes nav-micro-shake {
+  0%, 100% { transform: scale(1.04) translate(0, 0) rotate(0); }
+  25% { transform: scale(1.04) translate(var(--shake-distance, .5px), calc(var(--shake-distance, .5px) * -1)) rotate(var(--shake-angle, .5deg)); }
+  50% { transform: scale(1.04) translate(calc(var(--shake-distance, .5px) * -1), 0) rotate(calc(var(--shake-angle, .5deg) * -1)); }
+  75% { transform: scale(1.04) translate(0, var(--shake-distance, .5px)) rotate(var(--shake-angle, .5deg)); }
+}
+.nav-drag-ghost.ghost-landing { animation: none; transform: scale(1) rotate(0); transition-duration: var(--ui-duration, .16s); }
+.nav-item.selected::before { animation-name: custom-indicator-glow; }
+@keyframes custom-indicator-glow { from { box-shadow: 0 0 calc(4px * var(--element-glow, 1)) var(--purple); } to { box-shadow: 0 0 calc(16px * var(--element-glow, 1)) calc(3px * var(--element-glow, 1)) var(--purple); } }
+.metric:hover, .service:hover { box-shadow: 0 0 calc(18px * var(--element-glow, 1)) color-mix(in srgb, var(--purple) 14%, transparent); }
+@media (prefers-reduced-motion: reduce) { .ambient-motion *, .nav-drag-ghost { animation: none !important; } }
+/* Keep active states recognizable while changing only their background alpha. */
+.toggle { background-color: color-mix(in srgb, #454658 calc(var(--button-opacity, 1) * 100%), transparent); }
+.toggle.active, .primary, .action-accent:not(:disabled), .action-start:not(:disabled) { background-color: color-mix(in srgb, var(--purple) calc(var(--button-opacity, 1) * 100%), transparent); }
+.nav-item.selected { background: color-mix(in srgb, color-mix(in srgb, var(--purple) 13%, #171624) calc(var(--button-opacity, 1) * 100%), transparent); }
+.page { animation-duration: calc(.36s * var(--ui-factor, 1)); }
+.particle-one { animation-delay: -1.3s !important; }
+.particle-two { animation-delay: -3s !important; }
+.particle-three { animation-delay: -2.1s !important; }
+.particle-four { animation-delay: -4s !important; }
+.particle-five { animation-delay: -.7s !important; }
+.particle-six { animation-delay: -2.8s !important; }
+.particle-seven { animation-delay: -1.5s !important; }
+.particle-eight { animation-delay: -3.6s !important; }
+/* Preserve the header at minimum window width with large text and wide sidebar. */
+.main { container-type: inline-size; }
+@container (max-width: 580px) {
+  .shell-topbar { gap: 5px; }
+  .topbar-actions .action-restart { min-width: 100px; font-size: calc(11px * var(--font-scale, 1)); }
+  .topbar-actions .action-start { min-width: 100px; font-size: calc(11px * var(--font-scale, 1)); }
+  .mode-switch button { padding-left: 6px; padding-right: 6px; }
+}
+.primary:hover { box-shadow: 0 5px calc(18px * var(--element-glow, 1)) color-mix(in srgb, var(--purple) 40%, transparent); }
+.toggle:enabled:hover { box-shadow: 0 0 calc(14px * var(--element-glow, 1)) color-mix(in srgb, var(--purple) 35%, transparent); }
+.dispatcher-handle:hover::before, .dispatcher-handle:focus-visible::before { box-shadow: 0 0 calc(9px * var(--element-glow, 1)) var(--purple); }
+.nav-drag-ghost { box-shadow: 0 14px 30px #0009, 0 0 calc(18px * var(--element-glow, 1)) color-mix(in srgb, var(--purple) 38%, transparent); }
+.service-icon { animation-name: custom-service-glow; }
+@keyframes custom-service-glow { from { box-shadow: 0 0 0 transparent; } to { box-shadow: 0 0 calc(12px * var(--element-glow, 1)) color-mix(in srgb, var(--accent) 30%, transparent); } }

@@ -88,7 +88,7 @@
       if (Math.abs(distance) < 1) continue;
       const animation = item.animate(
         [{ transform: `translateY(${distance}px)` }, { transform: "translateY(0)" }],
-        { duration: 170, easing: "cubic-bezier(.2,.75,.2,1)" },
+        { duration: 170 * (parseFloat(getComputedStyle(document.documentElement).getPropertyValue("--ui-factor")) || 1), easing: "cubic-bezier(.2,.75,.2,1)" },
       );
       animation.id = "nav-shift";
     }
@@ -104,7 +104,8 @@
     ghost.style.top = `${target.top}px`;
     ghost.style.width = `${target.width}px`;
     ghost.style.opacity = "0";
-    setTimeout(() => ghost.remove(), 210);
+    const factor = parseFloat(getComputedStyle(document.documentElement).getPropertyValue("--ui-factor")) || 1;
+    setTimeout(() => ghost.remove(), 160 * factor + 40);
   }
 
   function finishDrag(cancelled) {

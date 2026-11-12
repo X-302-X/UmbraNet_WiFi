@@ -24,7 +24,7 @@ body {
 }
 body {
   font:
-    13px "Segoe UI",
+    calc(13px * var(--font-scale, 1)) "Segoe UI",
     sans-serif;
   background: var(--bg);
   color: var(--text);
@@ -62,30 +62,30 @@ button:focus-visible {
   align-items: center;
   gap: 9px;
   font-weight: 700;
-  font-size: 11px;
+  font-size: calc(11px * var(--font-scale, 1));
   letter-spacing: 2px;
   padding-left: 4px;
   white-space: nowrap;
 }
 .brand span {
   color: var(--purple);
-  font-size: 17px;
+  font-size: calc(17px * var(--font-scale, 1));
 }
 .brand small {
-  font-size: 10px;
+  font-size: calc(10px * var(--font-scale, 1));
   letter-spacing: 1px;
   color: var(--faint);
   font-weight: 400;
 }
 .eyebrow {
   color: var(--cyan);
-  font-size: 10px;
+  font-size: calc(10px * var(--font-scale, 1));
   letter-spacing: 2px;
   font-weight: 700;
   margin: 0 0 6px;
 }
 .sidebar-label {
-  font-size: 9px;
+  font-size: calc(9px * var(--font-scale, 1));
   color: var(--faint);
   letter-spacing: 1.5px;
   margin: 20px 12px 14px;
@@ -109,7 +109,7 @@ nav {
   display: inline-block;
   width: 25px;
   color: var(--muted);
-  font-size: 17px;
+  font-size: calc(17px * var(--font-scale, 1));
   margin-right: 8px;
 }
 .nav-item:hover {
@@ -148,12 +148,12 @@ nav {
   display: flex;
   flex-direction: column;
   gap: 5px;
-  font-size: 10px;
+  font-size: calc(10px * var(--font-scale, 1));
   color: var(--muted);
 }
 .sidebar-footer b {
   color: var(--cyan);
-  font-size: 10px;
+  font-size: calc(10px * var(--font-scale, 1));
   letter-spacing: 0.6px;
 }
 .main {
@@ -188,14 +188,14 @@ nav {
   gap: 15px;
 }
 .page h1 {
-  font-size: 25px;
+  font-size: calc(25px * var(--font-scale, 1));
   line-height: 1.22;
   font-weight: 600;
   margin: 4px 0 5px;
 }
 .subtitle {
   color: var(--muted);
-  font-size: 12px;
+  font-size: calc(12px * var(--font-scale, 1));
   margin: 0;
 }
 .badge {
@@ -203,7 +203,7 @@ nav {
   border-radius: 14px;
   padding: 6px 11px;
   color: var(--cyan);
-  font-size: 10px;
+  font-size: calc(10px * var(--font-scale, 1));
   font-weight: 700;
   white-space: nowrap;
 }
@@ -221,13 +221,13 @@ nav {
   z-index: 1;
 }
 .hero h2 {
-  font-size: 22px;
+  font-size: calc(22px * var(--font-scale, 1));
   margin: 9px 0 11px;
   font-weight: 600;
 }
 .hero p:not(.eyebrow) {
   color: var(--muted);
-  font-size: 12px;
+  font-size: calc(12px * var(--font-scale, 1));
   margin: 0 0 11px;
 }
 .purple {
@@ -243,7 +243,7 @@ nav {
   border: 1px solid var(--purple);
   background: var(--purple);
   color: var(--accent-foreground);
-  font-size: 12px;
+  font-size: calc(12px * var(--font-scale, 1));
   font-weight: 600;
   border-radius: 11px;
   height: 38px;
@@ -285,7 +285,7 @@ nav {
   display: grid;
   place-items: center;
   color: var(--cyan);
-  font-size: 32px;
+  font-size: calc(32px * var(--font-scale, 1));
 }
 .no-glow .orb {
   display: none;
@@ -306,16 +306,16 @@ nav {
 }
 .metric span {
   color: var(--faint);
-  font-size: 9px;
+  font-size: calc(9px * var(--font-scale, 1));
   letter-spacing: 1.2px;
   font-weight: 700;
 }
 .metric strong {
-  font-size: 18px;
+  font-size: calc(18px * var(--font-scale, 1));
   font-weight: 600;
 }
 .metric small {
-  font-size: 11px;
+  font-size: calc(11px * var(--font-scale, 1));
   color: var(--muted);
 }
 .info {
@@ -326,13 +326,13 @@ nav {
 .info h3,
 .section-title h3,
 .settings-card h3 {
-  font-size: 14px;
+  font-size: calc(14px * var(--font-scale, 1));
   font-weight: 600;
   margin: 0;
 }
 .info p {
   color: var(--muted);
-  font-size: 12px;
+  font-size: calc(12px * var(--font-scale, 1));
   line-height: 1.5;
   margin: 9px 0 0;
 }
@@ -359,7 +359,7 @@ nav {
 }
 .section-title span {
   color: var(--faint);
-  font-size: 11px;
+  font-size: calc(11px * var(--font-scale, 1));
 }
 .service-list {
   overflow: auto;
@@ -390,7 +390,7 @@ nav {
   color: var(--accent);
   border-radius: 12px;
   background: #292a3c;
-  font-size: 16px;
+  font-size: calc(16px * var(--font-scale, 1));
   font-weight: 700;
 }
 .service-copy {
@@ -400,14 +400,14 @@ nav {
 .service-copy strong,
 .settings-row h4 {
   display: block;
-  font-size: 13px;
+  font-size: calc(13px * var(--font-scale, 1));
   margin: 0 0 4px;
   font-weight: 600;
 }
 .service-copy small,
 .settings-row p {
   color: var(--muted);
-  font-size: 11px;
+  font-size: calc(11px * var(--font-scale, 1));
   margin: 0;
 }
 .toggle {
@@ -488,7 +488,7 @@ html[data-surface="acrylic"] .app.no-glow {
 .live-heading p,
 .setting-control p {
   color: var(--muted);
-  font-size: 11px;
+  font-size: calc(11px * var(--font-scale, 1));
   line-height: 1.45;
   margin: 5px 0 0;
 }
@@ -498,7 +498,7 @@ html[data-surface="acrylic"] .app.no-glow {
   gap: 8px;
 }
 .setting-control label {
-  font-size: 13px;
+  font-size: calc(13px * var(--font-scale, 1));
   font-weight: 600;
 }
 .control-heading output {
@@ -522,7 +522,7 @@ html[data-surface="acrylic"] .app.no-glow {
   border-radius: 9px;
   padding: 7px 12px;
   background: #272738;
-  font-size: 11px;
+  font-size: calc(11px * var(--font-scale, 1));
 }
 .reset-button:hover { background: #373649; }
 .palette {
