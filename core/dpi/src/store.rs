@@ -1,10 +1,11 @@
 use crate::capture::CapturePlan;
 use crate::catalog::Catalog;
+use crate::layout::AppPaths;
 use crate::selection::{atomic_write, Selection, PROTECTED_BROWSERS};
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
-use std::io::ErrorKind;
+use std::io::{ErrorKind, Write};
 use std::path::{Path, PathBuf};
 
 const DEFAULT_CATALOG: &str = include_str!("../services.json");
@@ -38,6 +39,17 @@ pub struct Store {
 }
 
 impl Store {
+    /// Переносит только пользовательские данные прежней сборки, не трогая драйвер.
+    pub fn open_portable(root: &Path) -> Result<Self, String> {
+        let paths = AppPaths::new(root);
+        let dir = paths.dpi_dir();
+        fs::create_dir_all(&dir).map_err(|e| format!("Не удалось создать папку данных: {e}"))?;
+        for name in ["services.json", "selection.json"] {
+            copy_legacy_if_missing(&paths.legacy_dpi_dir().join(name), &dir.join(name))?;
+        }
+        Self::open(&dir)
+    }
+
     pub fn open(dir: &Path) -> Result<Self, String> {
         fs::create_dir_all(dir)
             .map_err(|e| format!("Не удалось создать {}: {e}", dir.display()))?;
@@ -160,4 +172,34 @@ impl Store {
         self.refresh_active();
         self.view()
     }
+}
+
+// Старые файлы остаются нетронутыми, новые не перезаписываются.
+fn copy_legacy_if_missing(source: &Path, destination: &Path) -> Result<(), String> {
+    // Не читаем старый файл, если уже есть новый: он является источником истины.
+    match fs::metadata(destination) {
+        Ok(_) => return Ok(()),
+        Err(error) if error.kind() == ErrorKind::NotFound => {}
+        Err(error) => return Err(format!("Не удалось проверить данные: {error}")),
+    }
+    let contents = match fs::read(source) {
+        Ok(contents) => contents,
+        Err(error) if error.kind() == ErrorKind::NotFound => return Ok(()),
+        Err(error) => return Err(format!("Не удалось прочитать прежние данные: {error}")),
+    };
+    let mut file = match fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(destination)
+    {
+        Ok(file) => file,
+        Err(error) if error.kind() == ErrorKind::AlreadyExists => return Ok(()),
+        Err(error) => return Err(format!("Не удалось перенести данные: {error}")),
+    };
+    if let Err(error) = file.write_all(&contents).and_then(|_| file.sync_all()) {
+        drop(file);
+        let _ = fs::remove_file(destination);
+        return Err(format!("Не удалось перенести данные: {error}"));
+    }
+    Ok(())
 }

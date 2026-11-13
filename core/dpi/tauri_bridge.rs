@@ -1,13 +1,15 @@
 use std::path::PathBuf;
 use std::sync::Mutex;
 use tauri::State;
+#[cfg(all(windows, target_arch = "x86_64"))]
+use umbranet_dpi::layout::AppPaths;
 use umbranet_dpi::store::{Store, View};
 
 pub struct DpiState(Mutex<Result<Store, String>>);
 
 impl DpiState {
     pub fn new() -> Self {
-        let store = app_root().and_then(|root| Store::open(&root.join("core").join("dpi")));
+        let store = app_root().and_then(|root| Store::open_portable(&root));
         Self(Mutex::new(store))
     }
 }
@@ -87,11 +89,7 @@ pub async fn dpi_diagnostic_start(
                 Err(error) => return Err(error.clone()),
             }
         };
-        let path = app_root()?
-            .join("core")
-            .join("dpi")
-            .join("driver")
-            .join("WinDivert.dll");
+        let path = AppPaths::new(&app_root()?).driver_dll();
         diagnostic
             .0
             .start(Arc::new(WindowsBackend::new(path)), plan, selected)

@@ -4,6 +4,7 @@ pub mod catalog;
 pub mod diagnostics;
 pub mod domain;
 pub mod flow;
+pub mod layout;
 pub mod selection;
 pub mod store;
 pub mod strategy;
