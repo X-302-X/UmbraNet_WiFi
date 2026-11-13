@@ -1,7 +1,7 @@
 use crate::catalog::Catalog;
 use crate::domain::normalize_domain;
 use crate::strategy::Strategy;
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 use std::fs::{self, OpenOptions};
 use std::io::{self, Write};
 use std::path::Path;
@@ -22,6 +22,7 @@ pub struct Snapshot {
     pub services: BTreeSet<String>,
     pub domains: BTreeSet<String>,
     pub manual_processes: BTreeSet<String>,
+    pub service_processes: BTreeMap<String, BTreeSet<String>>,
     pub strategy: Strategy,
 }
 
@@ -73,11 +74,23 @@ impl Selection {
     pub fn manual_processes(&self) -> &BTreeSet<String> {
         &self.manual_processes
     }
+    /// Процессы сервиса не смешиваются с вручную добавленными процессами.
+    pub fn service_processes(&self) -> BTreeMap<String, BTreeSet<String>> {
+        let mut result = BTreeMap::new();
+        if self.services.contains("discord") {
+            result.insert(
+                "discord".to_string(),
+                BTreeSet::from(["discord.exe".to_string()]),
+            );
+        }
+        result
+    }
     pub fn visible_processes(&self) -> BTreeSet<String> {
         self.manual_processes
             .iter()
             .cloned()
             .chain(PROTECTED_BROWSERS.iter().map(|s| s.to_string()))
+            .chain(self.service_processes().into_values().flatten())
             .collect()
     }
     pub fn active_domains(&self, catalog: &Catalog) -> Result<BTreeSet<String>, String> {
@@ -96,6 +109,7 @@ impl Selection {
             services: self.services.clone(),
             domains: self.active_domains(catalog)?,
             manual_processes: self.manual_processes.clone(),
+            service_processes: self.service_processes(),
             strategy: strategy.clone(),
         })
     }

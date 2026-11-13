@@ -218,3 +218,28 @@ fn arbitrary_short_inputs_do_not_panic() {
         let _ = inspect_tcp(&bytes, true);
     }
 }
+
+#[test]
+fn discord_process_target_requires_verified_association() {
+    let c = Catalog::from_json(include_str!("../services.json")).unwrap();
+    let strategy =
+        Strategy::from_json(include_str!("../../../strtegs_Uz/pass-through.json")).unwrap();
+    let mut s = Selection::default();
+    s.set_service(&c, "discord", true).unwrap();
+    let old = s.snapshot(&c, &strategy).unwrap();
+    assert_eq!(classify(&old, &Evidence::Unknown, None), Match::Unknown);
+    assert_eq!(
+        classify(&old, &Evidence::Unknown, Some("discord.exe")),
+        Match::Process("discord.exe".into())
+    );
+    s.set_service(&c, "discord", false).unwrap();
+    let new = s.snapshot(&c, &strategy).unwrap();
+    assert_eq!(
+        classify(&new, &Evidence::Unknown, Some("discord.exe")),
+        Match::Unknown
+    );
+    assert_eq!(
+        classify(&old, &Evidence::Unknown, Some("discord.exe")),
+        Match::Process("discord.exe".into())
+    );
+}

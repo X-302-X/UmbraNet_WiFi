@@ -15,7 +15,12 @@ pub enum Match {
 pub fn classify(snapshot: &Snapshot, evidence: &Evidence, verified_process: Option<&str>) -> Match {
     if let Some(process) = verified_process {
         let name = process.to_ascii_lowercase();
-        if snapshot.manual_processes.contains(&name) {
+        if snapshot.manual_processes.contains(&name)
+            || snapshot
+                .service_processes
+                .values()
+                .any(|processes| processes.contains(&name))
+        {
             return Match::Process(name);
         }
     }
@@ -38,7 +43,12 @@ pub fn classify(snapshot: &Snapshot, evidence: &Evidence, verified_process: Opti
 pub fn classify_udp(snapshot: &Snapshot, verified_process: Option<&str>) -> Match {
     if let Some(process) = verified_process {
         let name = process.to_ascii_lowercase();
-        if snapshot.manual_processes.contains(&name) {
+        if snapshot.manual_processes.contains(&name)
+            || snapshot
+                .service_processes
+                .values()
+                .any(|processes| processes.contains(&name))
+        {
             return Match::Process(name);
         }
     }

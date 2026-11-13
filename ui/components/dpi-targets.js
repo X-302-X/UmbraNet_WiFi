@@ -63,7 +63,7 @@
     mark.textContent = "🔒";
     return mark;
   }
-  function makeRow(name, kind, sources, removeAction, removeValue, note) {
+  function makeRow(name, kind, sources, removeAction, removeValue, note, protectedRecord = false) {
     const row = document.createElement("div");
     row.className = "dispatcher-row";
     row.dataset.name = name;
@@ -77,8 +77,9 @@
     badge.textContent = kind;
     const title = document.createElement("span");
     title.className = "dispatcher-name";
-    title.title = name;
-    title.textContent = name;
+    const displayName = name === "discord.exe" ? "Discord.exe" : name;
+    title.title = displayName;
+    title.textContent = displayName;
     row.append(icon, badge, title);
     if (sources.length) {
       const source = document.createElement("span");
@@ -96,13 +97,13 @@
       button.setAttribute("aria-label", note || `Удалить ${name}`);
       button.addEventListener("click", () => change(removeAction, removeValue, false));
       row.append(button);
-    } else if (kind === "процесс") {
+    } else if (protectedRecord) {
       row.append(lock());
     } else {
       const info = document.createElement("span");
       info.className = "dispatcher-shared";
       info.textContent = "•";
-      info.title = note || "Общий домен выбранных сервисов";
+      info.title = note || "Общая запись выбранных сервисов";
       info.setAttribute("aria-label", info.title);
       row.append(info);
     }
@@ -136,10 +137,25 @@
       append(makeRow(domain, "домен", sources, action, value, note), `${domain} ${sources.join(" ")}`);
     }
     const protectedSet = new Set(confirmed.protected_processes);
-    const processes = [...new Set([...confirmed.protected_processes, ...confirmed.processes])].sort();
+    const serviceProcesses = confirmed.service_processes || {};
+    const automatic = Object.values(serviceProcesses).flat();
+    const processes = [...new Set([...confirmed.protected_processes, ...confirmed.processes, ...automatic])].sort();
     for (const name of processes) {
       const isProtected = protectedSet.has(name);
-      append(makeRow(name, "процесс", [], isProtected ? null : "remove_process", name, ""), name);
+      const manual = confirmed.processes.includes(name);
+      const owners = confirmed.services.filter(id => (serviceProcesses[id] || []).includes(name));
+      const sources = owners.map(serviceName);
+      if (manual && owners.length) sources.unshift("вручную");
+      let action = null, value = null, note = "";
+      if (!isProtected && manual) {
+        action = "remove_process"; value = name;
+        note = owners.length ? `Удалить ручную запись ${name}; процесс останется у выбранного сервиса` : `Удалить ${name}`;
+      } else if (!isProtected && owners.length === 1) {
+        action = "service"; value = owners[0]; note = `Выключить сервис «${serviceName(value)}»`;
+      } else if (!isProtected && owners.length > 1) {
+        note = "Общий процесс: выключите нужный сервис в списке выше";
+      }
+      append(makeRow(name, "процесс", sources, action, value, note, isProtected), `${name} ${sources.join(" ")}`);
     }
     if (!shown) {
       const empty = document.createElement("div");

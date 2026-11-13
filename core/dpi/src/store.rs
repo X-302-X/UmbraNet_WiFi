@@ -1,3 +1,4 @@
+use crate::capture::CapturePlan;
 use crate::catalog::Catalog;
 use crate::selection::{atomic_write, Selection, PROTECTED_BROWSERS};
 use serde::{Deserialize, Serialize};
@@ -25,6 +26,7 @@ pub struct View {
     pub protected_processes: BTreeSet<String>,
     pub active_domains: BTreeSet<String>,
     pub service_domains: BTreeMap<String, Vec<String>>,
+    pub service_processes: BTreeMap<String, BTreeSet<String>>,
     pub warning: Option<String>,
 }
 
@@ -108,8 +110,26 @@ impl Store {
                         .map(|service| (id.clone(), service.domains.clone()))
                 })
                 .collect(),
+            service_processes: self.selection.service_processes(),
             warning: self.warning.clone(),
         })
+    }
+
+    /// Только снимок параметров для диагностики, без доменных имён в результатах.
+    pub fn diagnostic_setup(&self) -> Result<(CapturePlan, BTreeSet<String>), String> {
+        if let Some(warning) = &self.warning {
+            return Err(warning.clone());
+        }
+        let plan = CapturePlan::from_selection(&self.catalog, &self.selection)?
+            .ok_or("Выберите хотя бы один сервис, домен или процесс")?;
+        let processes = self
+            .selection
+            .manual_processes()
+            .iter()
+            .cloned()
+            .chain(self.selection.service_processes().into_values().flatten())
+            .collect();
+        Ok((plan, processes))
     }
 
     /// Файл выбора — источник истины. Производный список восстанавливается при открытии.

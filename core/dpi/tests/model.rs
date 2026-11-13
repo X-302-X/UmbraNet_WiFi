@@ -238,3 +238,24 @@ fn failed_publication_to_missing_directory_leaves_existing_file_alone() {
     assert_eq!(fs::read_to_string(path).unwrap(), "previous.example\n");
     fs::remove_dir_all(dir).unwrap();
 }
+
+#[test]
+fn discord_card_adds_automatic_process_without_overwriting_manual_selection() {
+    let c = catalog();
+    let mut s = Selection::default();
+    assert!(!s.visible_processes().contains("discord.exe"));
+    s.set_service(&c, "discord", true).unwrap();
+    let running = s.snapshot(&c, &strategy()).unwrap();
+    assert!(s.visible_processes().contains("discord.exe"));
+    assert!(running.service_processes["discord"].contains("discord.exe"));
+    assert!(running.manual_processes.is_empty());
+    s.add_process("Discord.exe").unwrap();
+    s.set_service(&c, "discord", false).unwrap();
+    assert!(s.visible_processes().contains("discord.exe"));
+    let next = s.snapshot(&c, &strategy()).unwrap();
+    assert!(next.service_processes.is_empty());
+    assert!(next.manual_processes.contains("discord.exe"));
+    assert!(running.service_processes["discord"].contains("discord.exe"));
+    s.remove_process("discord.exe").unwrap();
+    assert!(!s.visible_processes().contains("discord.exe"));
+}

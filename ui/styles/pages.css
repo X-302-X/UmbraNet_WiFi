@@ -198,3 +198,13 @@
 .system-status .status-positive { color: #58d9a2; }
 .system-status .status-negative { color: #ff9b9b; }
 @media (max-width: 900px) { #routing .task-panel .input-row .action { min-width: 0; } }
+
+.diagnostic-panel .panel-head h3 { margin: 0; }
+.diagnostic-state { color: var(--muted); font-size: calc(11px * var(--font-scale, 1)); font-weight: 700; }
+.diagnostic-state.is-error, .diagnostic-message { color: #ff9b9b; }
+.diagnostic-message { font-size: calc(11px * var(--font-scale, 1)); line-height: 1.45; margin: 10px 0 0; }
+.diagnostic-stats { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 8px; margin-top: 12px; }
+.diagnostic-stats > div { display: flex; flex-direction: column; gap: 5px; padding: 8px 10px; border: 1px solid var(--border); border-radius: 8px; background: #ffffff08; }
+.diagnostic-stats span { color: var(--muted); font-size: calc(10px * var(--font-scale, 1)); }
+.diagnostic-stats strong { font-size: calc(16px * var(--font-scale, 1)); }
+@media (max-width: 920px) { .diagnostic-stats { grid-template-columns: repeat(2, minmax(0, 1fr)); } }

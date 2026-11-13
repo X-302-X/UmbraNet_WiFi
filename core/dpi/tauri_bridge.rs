@@ -51,3 +51,61 @@ pub async fn dpi_apply(
         Err(error) => Err(error.clone()),
     }
 }
+
+pub struct DiagnosticState(umbranet_dpi::diagnostics::session::Diagnostics);
+impl DiagnosticState {
+    pub fn new() -> Self {
+        Self(umbranet_dpi::diagnostics::session::Diagnostics::new(
+            std::time::Duration::from_secs(30),
+        ))
+    }
+}
+
+#[tauri::command]
+pub fn dpi_diagnostic_status(
+    state: State<'_, DiagnosticState>,
+) -> Result<umbranet_dpi::diagnostics::session::View, String> {
+    state.0.view()
+}
+
+#[tauri::command]
+pub async fn dpi_diagnostic_start(
+    dpi: State<'_, DpiState>,
+    diagnostic: State<'_, DiagnosticState>,
+) -> Result<umbranet_dpi::diagnostics::session::View, String> {
+    #[cfg(all(windows, target_arch = "x86_64"))]
+    {
+        use std::sync::Arc;
+        use umbranet_dpi::diagnostics::windows::WindowsBackend;
+        let (plan, selected) = {
+            let locked = dpi
+                .0
+                .lock()
+                .map_err(|_| "Хранилище DPI недоступно".to_string())?;
+            match &*locked {
+                Ok(store) => store.diagnostic_setup()?,
+                Err(error) => return Err(error.clone()),
+            }
+        };
+        let path = app_root()?
+            .join("core")
+            .join("dpi")
+            .join("driver")
+            .join("WinDivert.dll");
+        diagnostic
+            .0
+            .start(Arc::new(WindowsBackend::new(path)), plan, selected)
+    }
+    #[cfg(not(all(windows, target_arch = "x86_64")))]
+    {
+        let _ = (dpi, diagnostic);
+        Err("Диагностика доступна только в Windows x64".into())
+    }
+}
+
+#[tauri::command]
+pub async fn dpi_diagnostic_stop(
+    state: State<'_, DiagnosticState>,
+) -> Result<umbranet_dpi::diagnostics::session::View, String> {
+    state.0.stop()
+}

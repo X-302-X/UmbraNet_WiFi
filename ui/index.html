@@ -16,6 +16,7 @@
   <script defer src="components/dispatcher.js"></script>
   <script defer src="components/dpi-targets.js"></script>
   <script defer src="components/about.js"></script>
+  <script defer src="components/diagnostics.js"></script>
 </head>
 <body>
 <div class="app">
@@ -114,7 +115,15 @@
       <div class="panel card spaced"><div class="panel-head"><h3>Библиотека Uz</h3><span class="panel-note">Выбрано: —</span></div><div class="empty-box tall">Чтение стратегий ещё не подключено</div></div>
     </section>
     <section class="page" id="logs" aria-labelledby="logs-title" hidden>
-      <div class="page-title"><div><p class="eyebrow">UMBRA / ЖУРНАЛ</p><h1 id="logs-title">Логи запросов</h1><p class="subtitle">Журнал и диагностика ещё не подключены</p></div><button class="action" type="button" disabled>Копировать</button></div>
+      <div class="page-title"><div><p class="eyebrow">UMBRA / ЖУРНАЛ</p><h1 id="logs-title">Логи запросов</h1><p class="subtitle">Журнал запросов пока не подключён</p></div><button class="action" type="button" disabled>Копировать</button></div>
+      <div class="panel card spaced diagnostic-panel">
+        <div class="panel-head"><h3>Пассивная проверка соединений</h3><span id="diagnostic-state" class="diagnostic-state" role="status" aria-live="polite">Не запущена</span></div>
+        <p class="hint">Автоостановка запрашивается через 30 секунд после начала проверки. Наблюдаются новые исходящие соединения на выбранных диапазонах портов, включая другие приложения. Пакеты и их содержимое не читаются и не изменяются. На экране — только счётчики, без адресов и имён; на диск они не записываются. При первом запуске Windows может установить драйвер WinDivert. Если запуск или остановка зависли, закройте программу.</p>
+        <p class="hint">Сначала выберите сервис или ручную цель в «Маршрутизации». Уже существующие соединения не видны. Изменения выбора во время проверки начнут действовать при следующем запуске. Совпадения процессов предварительные; проверка не проверяет домены и не включает обход.</p>
+        <div class="button-row"><button id="diagnostic-start" class="action action-accent" type="button" disabled>Начать проверку</button><button id="diagnostic-stop" class="action" type="button" disabled>Остановить</button></div>
+        <p id="diagnostic-message" class="diagnostic-message" role="status" aria-live="polite" hidden></p>
+        <div class="diagnostic-stats"><div><span>Новые соединения</span><strong id="diagnostic-established">0</strong></div><div><span>Имя процесса получено</span><strong id="diagnostic-identified">0</strong></div><div><span>Предварительно выбранный процесс</span><strong id="diagnostic-selected">0</strong></div><div><span>Процесс не определён</span><strong id="diagnostic-unresolved">0</strong></div></div>
+      </div>
       <div class="stats-grid log-stats"><div class="stat card"><span>Всего</span><strong>—</strong></div><div class="stat card"><span>Обход</span><strong>—</strong></div><div class="stat card"><span>Напрямую</span><strong>—</strong></div><div class="stat card"><span>Блок</span><strong>—</strong></div><div class="stat card"><span>Починка</span><strong>—</strong></div><div class="stat card"><span>Ошибка</span><strong>—</strong></div></div>
       <div class="panel card spaced"><div class="log-controls"><input class="field" placeholder="🔍 Поиск по домену…" aria-label="Поиск по домену" disabled><button class="action" type="button" disabled>Все</button><button class="action" type="button" disabled>Обход</button><button class="action" type="button" disabled>Ошибки</button><button class="action" type="button" disabled>Пауза</button><button class="action" type="button" disabled>Очистить</button></div><div class="table-scroll"><div class="log-table"><div class="log-header"><span>Время</span><span>Домен</span><span>Тип</span><span>Маршрут</span><span>Источник</span><span>Причина</span><span>мс</span></div><div class="empty-box tall">Запись и просмотр логов пока не реализованы</div></div></div></div>
     </section>

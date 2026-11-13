@@ -19,9 +19,13 @@ async fn running_processes() -> Result<Vec<String>, String> {
 fn main() {
     tauri::Builder::default()
         .manage(dpi_bridge::DpiState::new())
+        .manage(dpi_bridge::DiagnosticState::new())
         .invoke_handler(tauri::generate_handler![
             dpi_bridge::dpi_get,
             dpi_bridge::dpi_apply,
+            dpi_bridge::dpi_diagnostic_status,
+            dpi_bridge::dpi_diagnostic_start,
+            dpi_bridge::dpi_diagnostic_stop,
             admin_status,
             running_processes
         ])

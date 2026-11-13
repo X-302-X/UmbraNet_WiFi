@@ -95,3 +95,31 @@ fn view_includes_domains_for_selected_services_only() {
     store.apply("service", "discord", false).unwrap();
     assert!(store.view().unwrap().service_domains.is_empty());
 }
+
+#[test]
+fn discord_auto_process_is_separate_from_manual_and_survives_restart() {
+    let dir = Temp::new();
+    let mut store = Store::open(&dir.0).unwrap();
+    let view = store.apply("service", "discord", true).unwrap();
+    assert!(view.service_processes["discord"].contains("discord.exe"));
+    assert!(!view.processes.contains("discord.exe"));
+    drop(store);
+    let mut store = Store::open(&dir.0).unwrap();
+    assert!(store.view().unwrap().service_processes["discord"].contains("discord.exe"));
+    store.apply("add_process", "Discord.exe", true).unwrap();
+    let view = store.apply("service", "discord", false).unwrap();
+    assert!(view.service_processes.is_empty());
+    assert!(view.processes.contains("discord.exe"));
+}
+
+#[test]
+fn diagnostic_setup_requires_targets_and_uses_separate_process_sources() {
+    let dir = Temp::new();
+    let mut store = Store::open(&dir.0).unwrap();
+    assert!(store.diagnostic_setup().is_err());
+    store.apply("service", "discord", true).unwrap();
+    let (plan, processes) = store.diagnostic_setup().unwrap();
+    assert!(plan.includes_discord_voice());
+    assert!(processes.contains("discord.exe"));
+    assert!(!processes.contains("chrome.exe"));
+}

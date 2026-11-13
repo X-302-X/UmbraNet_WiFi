@@ -66,3 +66,18 @@ fn manually_entered_discord_domain_does_not_guess_the_voice_service() {
             .includes_discord_voice()
     );
 }
+
+#[test]
+fn flow_filter_uses_matching_port_policy() {
+    let (catalog, strategy) = inputs();
+    let mut s = Selection::default();
+    s.set_service(&catalog, "youtube", true).unwrap();
+    let web = CapturePlan::from_snapshot(&s.snapshot(&catalog, &strategy).unwrap()).unwrap();
+    assert!(web.flow_filter().contains("remotePort == 8443"));
+    assert!(!web.flow_filter().contains("19294"));
+    s.set_service(&catalog, "discord", true).unwrap();
+    let voice = CapturePlan::from_snapshot(&s.snapshot(&catalog, &strategy).unwrap()).unwrap();
+    for port in ["19294", "19344", "50000", "65535"] {
+        assert!(voice.flow_filter().contains(port));
+    }
+}
