@@ -1,5 +1,5 @@
-; Capture the hook's directory before the macro is expanded in Tauri's script.
-!define UMBRA_INITIAL_STRATEGY "${__FILEDIR__}/../../strtegs_Uz/pass-through.json"
+; Use native separators: Windows NSIS must open this file while compiling Setup.
+!define UMBRA_INITIAL_STRATEGY "${__FILEDIR__}\..\..\strtegs_Uz\pass-through.json"
 
 ; User strategies and logs are not bundled resources and are never deleted here.
 !macro NSIS_HOOK_POSTINSTALL
