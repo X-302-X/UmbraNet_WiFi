@@ -13,8 +13,8 @@
       "minHeight": 560,
       "resizable": true,
       "decorations": false,
-      "transparent": true,
-      "backgroundColor": [0, 0, 0, 0]
+      "transparent": false,
+      "backgroundColor": [11, 10, 19, 255]
     }],
     "security": { "csp": "default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; connect-src ipc: http://ipc.localhost https://ipc.localhost; object-src 'none'; base-uri 'none'" }
   },

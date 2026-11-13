@@ -18,7 +18,9 @@ use windows_sys::Win32::System::Registry::{
 };
 use windows_sys::Win32::System::Threading::CreateMutexW;
 use windows_sys::Win32::UI::Shell::ShellExecuteW;
-use windows_sys::Win32::UI::WindowsAndMessaging::SW_SHOWNORMAL;
+use windows_sys::Win32::UI::WindowsAndMessaging::{
+    MessageBoxW, IDYES, MB_DEFBUTTON2, MB_ICONWARNING, MB_SETFOREGROUND, MB_YESNO, SW_SHOWNORMAL,
+};
 
 fn wide(value: &OsStr) -> Vec<u16> {
     value.encode_wide().chain(Some(0)).collect()
@@ -136,7 +138,16 @@ pub fn webview2_available() -> bool {
 
 pub fn suggested_path() -> Result<String, String> {
     if let Some(path) = existing_installation()? {
-        return Ok(path.to_string_lossy().into_owned());
+        match fs::metadata(&path) {
+            Ok(meta) if meta.is_dir() => return Ok(path.to_string_lossy().into_owned()),
+            Ok(_) => {
+                return Err(
+                    "Путь прежней установки указывает не на папку. Установка остановлена.".into(),
+                )
+            }
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+            Err(error) => return Err(format!("Не удалось проверить прежнюю папку: {error}")),
+        }
     }
     let base = std::env::var_os("LOCALAPPDATA")
         .ok_or("Не удалось определить стандартную папку пользователя.")?;
@@ -263,10 +274,76 @@ pub fn run_classic_fallback(payload: &[u8]) -> Result<(), String> {
     Ok(())
 }
 
+fn confirm_missing_installation(old: &Path) -> bool {
+    let message = format!(
+        "Папка прежней установки не найдена:\n{}\n\nПродолжить установку в выбранную пустую папку? Запись Windows будет обновлена. Старые файлы и стратегии установщик не удаляет. Если прежняя папка была на другом или отключённом диске, сначала подключите его и нажмите «Нет».",
+        old.display()
+    );
+    let text = wide(OsStr::new(&message));
+    let title = wide(OsStr::new("UmbraNet: прежняя установка не найдена"));
+    unsafe {
+        MessageBoxW(
+            ptr::null_mut(),
+            text.as_ptr(),
+            title.as_ptr(),
+            MB_YESNO | MB_ICONWARNING | MB_DEFBUTTON2 | MB_SETFOREGROUND,
+        ) == IDYES
+    }
+}
+
 pub fn install(path: &str, shortcuts: bool, payload: &[u8]) -> Result<PathBuf, String> {
+    install_with_confirmation(path, shortcuts, payload, confirm_missing_installation)
+}
+
+fn install_with_confirmation(
+    path: &str,
+    shortcuts: bool,
+    payload: &[u8],
+    confirm_missing: impl FnOnce(&Path) -> bool,
+) -> Result<PathBuf, String> {
     let _lock = InstallLock::acquire()?;
     let target = validate_path(path)?;
-    let previous = existing_installation()?;
+    let previous = match existing_installation()? {
+        Some(old) => match fs::metadata(&old) {
+            Ok(meta) if meta.is_dir() => Some(old),
+            Ok(_) => {
+                return Err(
+                    "Путь прежней установки указывает не на папку. Установка остановлена.".into(),
+                )
+            }
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                // Missing on a disconnected drive must not be mistaken for a removed installation.
+                let mut parts = old.components();
+                let drive = match (parts.next(), parts.next()) {
+                    (Some(Component::Prefix(prefix)), Some(Component::RootDir))
+                        if matches!(prefix.kind(), Prefix::Disk(_)) =>
+                    {
+                        PathBuf::from(prefix.as_os_str()).join("\\")
+                    }
+                    _ => {
+                        return Err(
+                            "Путь прежней установки некорректен. Установка остановлена.".into()
+                        )
+                    }
+                };
+                if !drive.is_dir() {
+                    return Err(format!("Диск прежней установки недоступен ({}). Подключите его и повторите попытку.", drive.display()));
+                }
+                if !confirm_missing(&old) {
+                    return Err(
+                        "Установка отменена: прежняя папка не найдена. Данные не изменены.".into(),
+                    );
+                }
+                None
+            }
+            Err(error) => {
+                return Err(format!(
+                    "Не удалось проверить прежнюю папку установки: {error}. Данные не изменены."
+                ))
+            }
+        },
+        None => None,
+    };
     if previous.is_some() && !target.is_dir() {
         return Err("UmbraNet уже зарегистрирован в Windows. Для переустановки выберите прежнюю существующую папку.".into());
     }
@@ -400,6 +477,58 @@ mod tests {
         assert_eq!(fs::read(&custom).unwrap(), b"user custom");
         assert_eq!(fs::read(&selection).unwrap(), b"user selection");
         assert!(!target.join("umbranet-wifi.exe").exists());
+        fs::remove_dir_all(&target).unwrap();
+
+        // Simulate a stale registration on the isolated runner. The prior folder does not exist.
+        assert!(existing_installation().unwrap().is_none());
+        let missing = std::env::temp_dir().join(format!("Umbra-missing-{}", std::process::id()));
+        assert!(!missing.exists());
+        let key = format!(r"HKCU\{}", UNINSTALL_KEY);
+        let status = Command::new("reg.exe")
+            .args(["add", &key, "/v", "InstallLocation", "/t", "REG_SZ", "/d"])
+            .arg(&missing)
+            .args(["/f"])
+            .status()
+            .unwrap();
+        assert!(status.success());
+        let target = std::env::temp_dir().join(format!("Umbra-stale-test-{}", std::process::id()));
+        assert!(!target.exists());
+        assert!(
+            install_with_confirmation(&target.to_string_lossy(), false, PAYLOAD, |old| {
+                assert_eq!(old, missing);
+                false
+            })
+            .is_err()
+        );
+        assert!(!target.exists(), "cancel must not create the destination");
+        assert_eq!(
+            existing_installation().unwrap().as_deref(),
+            Some(missing.as_path())
+        );
+        fs::create_dir(&target).unwrap();
+        let sentinel = target.join("do-not-overwrite.txt");
+        fs::write(&sentinel, b"keep").unwrap();
+        assert!(
+            install_with_confirmation(&target.to_string_lossy(), false, PAYLOAD, |_| true).is_err()
+        );
+        assert_eq!(fs::read(&sentinel).unwrap(), b"keep");
+        assert_eq!(
+            existing_installation().unwrap().as_deref(),
+            Some(missing.as_path())
+        );
+        fs::remove_file(sentinel).unwrap();
+        install_with_confirmation(&target.to_string_lossy(), false, PAYLOAD, |_| true).unwrap();
+        assert_eq!(
+            existing_installation().unwrap().as_deref(),
+            Some(target.as_path())
+        );
+        assert!(!missing.exists());
+        let mut uninstall = Command::new(target.join("uninstall.exe"));
+        uninstall
+            .arg("/S")
+            .raw_arg(format!("_?={}", target.display()))
+            .creation_flags(0x08000000);
+        assert!(uninstall.status().unwrap().success());
         fs::remove_dir_all(&target).unwrap();
     }
 }
