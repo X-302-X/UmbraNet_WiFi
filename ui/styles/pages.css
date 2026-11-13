@@ -161,3 +161,15 @@
 .topbar-actions .action-restart { min-width: 124px; font-size: calc(13px * var(--font-scale, 1)); }
 .topbar-actions .action-start { min-width: 140px; font-size: calc(13px * var(--font-scale, 1)); }
 #routing .routing-layout { flex: 1; min-height: 0; }
+
+/* The dispatcher keeps its own scroll area when resized. */
+#routing .task-panel { display: flex; flex-direction: column; }
+#routing .task-panel .input-row, #routing .task-panel .subhead, .dispatcher-handle { flex: none; }
+.dispatcher-entries { min-height: 0; overflow-y: auto; display: flex; flex-wrap: wrap; align-content: flex-start; gap: 5px; padding: 5px 3px 4px; }
+.dispatcher-chip { display: inline-flex; align-items: center; gap: 5px; max-width: 100%; padding: 3px 6px; border: 1px solid var(--border); border-radius: 7px; color: var(--text); font-size: calc(11px * var(--font-scale, 1)); overflow-wrap: anywhere; }
+.dispatcher-chip small { color: var(--muted); font-size: calc(9px * var(--font-scale, 1)); white-space: nowrap; }
+.dispatcher-remove { border: 0; background: transparent; color: var(--muted); padding: 0 2px; font-size: 16px; line-height: 1; cursor: pointer; }
+.dispatcher-remove:hover { color: #ff7a9a; }
+.dispatcher-remove:disabled { cursor: not-allowed; opacity: .5; }
+.dispatcher-message { flex: none; padding: 4px 3px 0; font-size: calc(10px * var(--font-scale, 1)); color: var(--muted); }
+.dispatcher-message.is-error { color: #ff8da2; }

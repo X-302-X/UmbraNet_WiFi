@@ -19,7 +19,7 @@
     empty.hidden = found !== 0;
   });
 
-  // Visual selections are session-only and do not control network settings.
+  // Mode and route pickers are visual until network components are connected.
   const modes = [...document.querySelectorAll("[data-mode]")];
   const comboTabs = [...document.querySelectorAll("[data-route-tab]")];
   const comboGroup = document.querySelector("#combo-tabs");
@@ -55,7 +55,7 @@
   }
   renderRoutePicker();
 
-  for (const button of document.querySelectorAll(".catalog-row .toggle, .catalog-row .favorite")) {
+  for (const button of document.querySelectorAll(".catalog-row .favorite")) {
     button.addEventListener("click", () => {
       const selected = button.getAttribute("aria-pressed") !== "true";
       button.setAttribute("aria-pressed", String(selected));

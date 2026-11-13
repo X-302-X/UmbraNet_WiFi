@@ -14,6 +14,7 @@
   <script defer src="components/appearance.js"></script>
   <script defer src="components/pages.js"></script>
   <script defer src="components/dispatcher.js"></script>
+  <script defer src="components/dpi-targets.js"></script>
 </head>
 <body>
 <div class="app">
@@ -63,8 +64,10 @@
           </div>
           <div class="task-panel">
             <div id="dispatcher-handle" class="dispatcher-handle" tabindex="0" role="separator" aria-orientation="horizontal" aria-label="Высота диспетчера задач" aria-valuemin="80" aria-valuemax="300" aria-valuenow="175"><span class="dispatcher-title">📋 &nbsp;ДИСПЕТЧЕР ЗАДАЧ</span></div>
-            <div class="input-row"><input class="field" aria-label="Домен или процесс" placeholder="chatgpt.com или chrome.exe" disabled><button class="action" type="button" disabled>Процесс</button><button class="action" type="button" disabled>+ Добавить</button></div>
-            <div class="panel-head subhead"><h4>Активные записи</h4><span class="panel-note">—</span></div><div class="dispatcher-empty">Список будет доступен после подключения ядра.</div>
+            <div class="input-row"><input id="dpi-entry" class="field" aria-label="Домен или процесс" placeholder="example.com или Discord.exe" disabled><button id="dpi-entry-mode" class="action" type="button" aria-pressed="false" disabled>Процесс</button><button id="dpi-add" class="action" type="button" disabled>+ Добавить</button></div>
+            <div class="panel-head subhead"><h4>Выбранные цели</h4><span id="dpi-count" class="panel-note">—</span></div>
+            <div id="dpi-message" class="dispatcher-message" role="status" aria-live="polite">Загрузка целей…</div>
+            <div id="dpi-entries" class="dispatcher-entries" aria-label="Выбранные цели"></div>
           </div>
         </div>
         <aside class="panel card routing-side" aria-label="Выбор маршрута">

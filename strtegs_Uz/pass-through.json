@@ -1,0 +1,6 @@
+{
+  "version": 1,
+  "id": "pass-through",
+  "name": "Диагностика — без обхода",
+  "actions": ["pass_through"]
+}

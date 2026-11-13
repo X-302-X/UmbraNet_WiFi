@@ -1,0 +1,295 @@
+{
+  "version": 1,
+  "services": {
+    "chatgpt / openai": {
+      "name": "ChatGPT / OpenAI",
+      "domains": [
+        "openai.com",
+        "chatgpt.com",
+        "api.openai.com",
+        "auth0.openai.com",
+        "cdn.oaistatic.com",
+        "chat.openai.com",
+        "ab.chatgpt.com",
+        "files.oaiusercontent.com",
+        "sora.com",
+        "sora.chatgpt.com",
+        "o3.chatgpt.com",
+        "ios.chat.openai.com"
+      ]
+    },
+    "claude (anthropic)": {
+      "name": "Claude (Anthropic)",
+      "domains": [
+        "claude.ai",
+        "anthropic.com",
+        "api.anthropic.com",
+        "statsig.anthropic.com"
+      ]
+    },
+    "google gemini": {
+      "name": "Google Gemini",
+      "domains": [
+        "gemini.google.com",
+        "bard.google.com",
+        "makersuite.google.com",
+        "aistudio.google.com"
+      ]
+    },
+    "grok (xai)": {
+      "name": "Grok (xAI)",
+      "domains": [
+        "grok.com",
+        "x.ai",
+        "api.x.ai"
+      ]
+    },
+    "perplexity": {
+      "name": "Perplexity",
+      "domains": [
+        "perplexity.ai",
+        "www.perplexity.ai",
+        "api.perplexity.ai"
+      ]
+    },
+    "deepl": {
+      "name": "DeepL",
+      "domains": [
+        "deepl.com",
+        "www.deepl.com",
+        "api.deepl.com",
+        "api-free.deepl.com"
+      ]
+    },
+    "midjourney": {
+      "name": "Midjourney",
+      "domains": [
+        "midjourney.com",
+        "www.midjourney.com",
+        "discord.gg"
+      ]
+    },
+    "deepseek": {
+      "name": "DeepSeek",
+      "domains": [
+        "deepseek.com",
+        "www.deepseek.com",
+        "api.deepseek.com",
+        "chat.deepseek.com"
+      ]
+    },
+    "supercell (brawl stars, coc)": {
+      "name": "Supercell (Brawl Stars, CoC)",
+      "domains": [
+        "supercell.com",
+        "brawlstars.com",
+        "clashroyale.com",
+        "clashofclans.com",
+        "hayday.com",
+        "id.supercell.com"
+      ]
+    },
+    "epic games": {
+      "name": "Epic Games",
+      "domains": [
+        "epicgames.com",
+        "store.epicgames.com",
+        "launcher-public-service-prod06.ol.epicgames.com",
+        "account-public-service-prod.ol.epicgames.com",
+        "fortnite.com"
+      ]
+    },
+    "stumble guys": {
+      "name": "Stumble Guys",
+      "domains": [
+        "stumbleguys.com",
+        "api.stumbleguys.com"
+      ]
+    },
+    "destiny 2 (bungie)": {
+      "name": "Destiny 2 (Bungie)",
+      "domains": [
+        "bungie.net",
+        "www.bungie.net",
+        "api.bungie.com"
+      ]
+    },
+    "steam": {
+      "name": "Steam",
+      "domains": [
+        "steampowered.com",
+        "steamcommunity.com",
+        "store.steampowered.com",
+        "api.steampowered.com",
+        "steamusercontent.com",
+        "steamcdn.com"
+      ]
+    },
+    "youtube": {
+      "name": "YouTube",
+      "domains": [
+        "youtube.com",
+        "www.youtube.com",
+        "youtu.be",
+        "youtube-nocookie.com",
+        "youtubekids.com",
+        "youtubei.googleapis.com",
+        "youtube.googleapis.com",
+        "youtubeembeddedplayer.googleapis.com",
+        "googlevideo.com",
+        "wide-youtube.l.google.com",
+        "youtube-ui.l.google.com",
+        "yt-video-upload.l.google.com",
+        "ytimg.com",
+        "ytimg.l.google.com",
+        "i.ytimg.com",
+        "s.ytimg.com",
+        "yt3.ggpht.com",
+        "yt4.ggpht.com",
+        "yt3.googleusercontent.com",
+        "jnn-pa.googleapis.com",
+        "play.google.com",
+        "googleusercontent.com",
+        "gstatic.com",
+        "accounts.google.com",
+        "waa-pa.clients6.google.com"
+      ]
+    },
+    "spotify": {
+      "name": "Spotify",
+      "domains": [
+        "spotify.com",
+        "open.spotify.com",
+        "accounts.spotify.com",
+        "api.spotify.com",
+        "apresolve.spotify.com",
+        "spclient.wg.spotify.com"
+      ]
+    },
+    "twitch": {
+      "name": "Twitch",
+      "domains": [
+        "twitch.tv",
+        "www.twitch.tv",
+        "api.twitch.tv",
+        "static.twitchsvc.net",
+        "passport.twitch.tv"
+      ]
+    },
+    "discord": {
+      "name": "Discord",
+      "domains": [
+        "dis.gd",
+        "discord-attachments-uploads-prd.storage.googleapis.com",
+        "discord.app",
+        "discord.co",
+        "discord.com",
+        "discord.design",
+        "discord.dev",
+        "discord.gift",
+        "discord.gifts",
+        "discord.gg",
+        "discord.media",
+        "discord.new",
+        "discord.store",
+        "discord-activities.com",
+        "discordactivities.com",
+        "discordapp.com",
+        "discordapp.net",
+        "discordcdn.com",
+        "discordmerch.com",
+        "discordpartygames.com",
+        "discordsays.com",
+        "discordsez.com",
+        "discordstatus.com",
+        "gateway.discord.gg",
+        "cdn.discordapp.com",
+        "media.discordapp.net",
+        "images-ext-1.discordapp.net",
+        "images-ext-2.discordapp.net",
+        "stable.dl2.discordapp.net",
+        "dl.discordapp.net",
+        "api.discord.com",
+        "status.discord.com"
+      ]
+    },
+    "github / copilot": {
+      "name": "GitHub / Copilot",
+      "domains": [
+        "github.com",
+        "api.github.com",
+        "copilot.github.com",
+        "github.githubassets.com",
+        "githubcopilot.com",
+        "objects.githubusercontent.com",
+        "raw.githubusercontent.com",
+        "avatars.githubusercontent.com"
+      ]
+    },
+    "jetbrains": {
+      "name": "JetBrains",
+      "domains": [
+        "jetbrains.com",
+        "www.jetbrains.com",
+        "account.jetbrains.com",
+        "plugins.jetbrains.com",
+        "download.jetbrains.com",
+        "data.services.jetbrains.com"
+      ]
+    },
+    "notion": {
+      "name": "Notion",
+      "domains": [
+        "notion.so",
+        "www.notion.so",
+        "api.notion.com",
+        "notion.com"
+      ]
+    },
+    "figma": {
+      "name": "Figma",
+      "domains": [
+        "figma.com",
+        "www.figma.com",
+        "api.figma.com",
+        "static.figma.com"
+      ]
+    },
+    "docker hub": {
+      "name": "Docker Hub",
+      "domains": [
+        "docker.com",
+        "hub.docker.com",
+        "registry-1.docker.io",
+        "auth.docker.io",
+        "production.cloudflare.docker.com",
+        "index.docker.io"
+      ]
+    },
+    "framer": {
+      "name": "Framer",
+      "domains": [
+        "framer.com",
+        "www.framer.com",
+        "framerusercontent.com"
+      ]
+    },
+    "modrinth": {
+      "name": "Modrinth",
+      "domains": [
+        "modrinth.com",
+        "api.modrinth.com",
+        "cdn.modrinth.com"
+      ]
+    },
+    "cloudflare": {
+      "name": "Cloudflare",
+      "domains": [
+        "cloudflare.com",
+        "www.cloudflare.com",
+        "cloudflare.net",
+        "cloudflareinsights.com"
+      ]
+    }
+  }
+}
