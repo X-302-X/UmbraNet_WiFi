@@ -39,7 +39,7 @@ pub struct Store {
 }
 
 impl Store {
-    /// Переносит только пользовательские данные прежней сборки, не трогая драйвер.
+    /// Переносит данные из экспериментальной data/core/dpi, не трогая драйвер.
     pub fn open_portable(root: &Path) -> Result<Self, String> {
         let paths = AppPaths::new(root);
         let dir = paths.dpi_dir();

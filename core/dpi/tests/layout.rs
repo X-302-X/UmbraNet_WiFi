@@ -23,14 +23,14 @@ impl Drop for Temp {
 }
 
 #[test]
-fn release_layout_is_inside_data_and_separate_from_source_tree() {
+fn installed_layout_places_dpi_and_driver_in_core() {
     let temp = Temp::new();
     let paths = AppPaths::new(&temp.0);
-    assert_eq!(paths.dpi_dir(), temp.0.join("data/core/dpi"));
-    assert_eq!(paths.legacy_dpi_dir(), temp.0.join("core/dpi"));
+    assert_eq!(paths.dpi_dir(), temp.0.join("core/dpi"));
+    assert_eq!(paths.legacy_dpi_dir(), temp.0.join("data/core/dpi"));
     assert_eq!(
         paths.driver_dll(),
-        temp.0.join("data/core/dpi/driver/WinDivert.dll")
+        temp.0.join("core/dpi/driver/WinDivert.dll")
     );
     let view = Store::open_portable(&temp.0).unwrap().view().unwrap();
     assert!(view.services.is_empty());
