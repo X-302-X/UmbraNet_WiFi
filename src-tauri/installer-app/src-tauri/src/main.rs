@@ -34,6 +34,18 @@ fn setup_suggested_path() -> Result<String, String> {
     }
 }
 #[tauri::command]
+fn setup_resolve_path(path: String) -> Result<String, String> {
+    #[cfg(windows)]
+    {
+        backend::resolved_path(&path)
+    }
+    #[cfg(not(windows))]
+    {
+        let _ = path;
+        Err("Установщик доступен только в Windows.".into())
+    }
+}
+#[tauri::command]
 async fn setup_choose_folder() -> Result<Option<String>, String> {
     #[cfg(windows)]
     {
@@ -180,6 +192,7 @@ fn main() {
         })
         .invoke_handler(tauri::generate_handler![
             setup_suggested_path,
+            setup_resolve_path,
             setup_choose_folder,
             setup_install,
             setup_open,

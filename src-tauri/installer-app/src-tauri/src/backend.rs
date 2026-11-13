@@ -12,12 +12,16 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use windows_sys::Win32::Foundation::{
     CloseHandle, GetLastError, ERROR_ALREADY_EXISTS, ERROR_FILE_NOT_FOUND, ERROR_PATH_NOT_FOUND,
 };
+use windows_sys::Win32::System::Com::CoTaskMemFree;
 use windows_sys::Win32::System::Registry::{
     RegCloseKey, RegGetValueW, RegOpenKeyExW, HKEY, HKEY_CURRENT_USER, HKEY_LOCAL_MACHINE,
     KEY_READ, RRF_RT_REG_SZ,
 };
 use windows_sys::Win32::System::Threading::CreateMutexW;
-use windows_sys::Win32::UI::Shell::ShellExecuteW;
+use windows_sys::Win32::UI::Shell::{
+    FOLDERID_Desktop, FOLDERID_Documents, FOLDERID_Downloads, FOLDERID_PublicDesktop,
+    SHGetKnownFolderPath, ShellExecuteW,
+};
 use windows_sys::Win32::UI::WindowsAndMessaging::{
     MessageBoxW, IDYES, MB_DEFBUTTON2, MB_ICONWARNING, MB_SETFOREGROUND, MB_YESNO, SW_SHOWNORMAL,
 };
@@ -172,12 +176,88 @@ fn validate_path(value: &str) -> Result<PathBuf, String> {
         || components
             .clone()
             .any(|c| !matches!(c, Component::Normal(_)))
-        || components.clone().next().is_none()
         || value.encode_utf16().count() > 200
     {
-        return Err("Выберите локальную папку на диске (не корень диска), без '..'; путь должен быть короче 201 символа.".into());
+        return Err(
+            "Выберите локальную папку на диске без '..'; путь должен быть короче 201 символа."
+                .into(),
+        );
     }
     Ok(path)
+}
+
+/// Resolve a selected location to a dedicated app directory, retaining old custom install paths.
+pub fn resolved_path(value: &str) -> Result<String, String> {
+    let previous = existing_installation()?;
+    Ok(resolve_path(value, previous.as_deref())?
+        .to_string_lossy()
+        .into_owned())
+}
+
+fn is_shared_location(path: &Path) -> bool {
+    // Never treat a Windows special folder or disk root as the app's own directory.
+    if path.parent().is_none() {
+        return true;
+    }
+    for id in [
+        &FOLDERID_Desktop,
+        &FOLDERID_PublicDesktop,
+        &FOLDERID_Documents,
+        &FOLDERID_Downloads,
+    ] {
+        let mut value = ptr::null_mut();
+        let status = unsafe { SHGetKnownFolderPath(id, 0, ptr::null_mut(), &mut value) };
+        if status < 0 || value.is_null() {
+            continue;
+        }
+        let mut len = 0;
+        unsafe {
+            while len < 32768 && *value.add(len) != 0 {
+                len += 1;
+            }
+        }
+        let known = if len < 32768 {
+            Some(PathBuf::from(OsString::from_wide(unsafe {
+                std::slice::from_raw_parts(value, len)
+            })))
+        } else {
+            None
+        };
+        unsafe {
+            CoTaskMemFree(value.cast());
+        }
+        if let Some(known) = known {
+            if path
+                .to_string_lossy()
+                .eq_ignore_ascii_case(&known.to_string_lossy())
+                || (path.is_dir() && known.is_dir() && same_path(path, &known).unwrap_or(false))
+            {
+                return true;
+            }
+        }
+    }
+    false
+}
+
+fn resolve_path(value: &str, previous: Option<&Path>) -> Result<PathBuf, String> {
+    let path = validate_path(value)?;
+    let is_previous = previous.is_some_and(|old| {
+        old.to_string_lossy()
+            .eq_ignore_ascii_case(&path.to_string_lossy())
+            || (path.is_dir() && old.is_dir() && same_path(&path, old).unwrap_or(false))
+    });
+    let is_app_dir = path
+        .file_name()
+        .is_some_and(|name| name.to_string_lossy().eq_ignore_ascii_case("UmbraNet_WiFi"));
+    let result = if !is_shared_location(&path) && (is_previous || is_app_dir) {
+        path
+    } else {
+        path.join("UmbraNet_WiFi")
+    };
+    if result.as_os_str().encode_wide().count() > 200 {
+        return Err("Итоговый путь к папке UmbraNet_WiFi слишком длинный.".into());
+    }
+    Ok(result)
 }
 
 fn same_path(a: &Path, b: &Path) -> Result<bool, String> {
@@ -274,11 +354,19 @@ pub fn run_classic_fallback(payload: &[u8]) -> Result<(), String> {
     Ok(())
 }
 
-fn confirm_missing_installation(old: &Path) -> bool {
-    let message = format!(
-        "Папка прежней установки не найдена:\n{}\n\nПродолжить установку в выбранную пустую папку? Запись Windows будет обновлена. Старые файлы и стратегии установщик не удаляет. Если прежняя папка была на другом или отключённом диске, сначала подключите его и нажмите «Нет».",
-        old.display()
-    );
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum PreviousState {
+    MissingFolder,
+    ReinstallHere,
+    IncompleteElsewhere,
+}
+
+fn confirm_reinstall(old: &Path, state: PreviousState) -> bool {
+    let message = match state {
+        PreviousState::MissingFolder => format!("Обнаружена прежняя установка, но её папка не найдена:\n{}\n\nУстановить заново в выбранную пустую папку и обновить запись Windows? Старые файлы и стратегии не удаляются.", old.display()),
+        PreviousState::ReinstallHere => format!("Обнаружена прежняя установка:\n{}\n\nПереустановить программу в эту папку? Файлы приложения будут заменены. Ваши стратегии, настройки и логи останутся на месте. Перед продолжением закройте UmbraNet.", old.display()),
+        PreviousState::IncompleteElsewhere => format!("В прежней папке:\n{}\nпрограмма и файл удаления не найдены.\n\nУстановить в выбранную новую папку? Старые файлы не будут удалены, но стратегии и настройки останутся в прежней папке и автоматически не перенесутся. Запись Windows будет обновлена.", old.display()),
+    };
     let text = wide(OsStr::new(&message));
     let title = wide(OsStr::new("UmbraNet: прежняя установка не найдена"));
     unsafe {
@@ -292,18 +380,19 @@ fn confirm_missing_installation(old: &Path) -> bool {
 }
 
 pub fn install(path: &str, shortcuts: bool, payload: &[u8]) -> Result<PathBuf, String> {
-    install_with_confirmation(path, shortcuts, payload, confirm_missing_installation)
+    install_with_confirmation(path, shortcuts, payload, confirm_reinstall)
 }
 
 fn install_with_confirmation(
     path: &str,
     shortcuts: bool,
     payload: &[u8],
-    confirm_missing: impl FnOnce(&Path) -> bool,
+    confirm_reinstall: impl Fn(&Path, PreviousState) -> bool,
 ) -> Result<PathBuf, String> {
     let _lock = InstallLock::acquire()?;
-    let target = validate_path(path)?;
-    let previous = match existing_installation()? {
+    let registered = existing_installation()?;
+    let target = resolve_path(path, registered.as_deref())?;
+    let mut previous = match registered {
         Some(old) => match fs::metadata(&old) {
             Ok(meta) if meta.is_dir() => Some(old),
             Ok(_) => {
@@ -329,7 +418,7 @@ fn install_with_confirmation(
                 if !drive.is_dir() {
                     return Err(format!("Диск прежней установки недоступен ({}). Подключите его и повторите попытку.", drive.display()));
                 }
-                if !confirm_missing(&old) {
+                if !confirm_reinstall(&old, PreviousState::MissingFolder) {
                     return Err(
                         "Установка отменена: прежняя папка не найдена. Данные не изменены.".into(),
                     );
@@ -344,18 +433,34 @@ fn install_with_confirmation(
         },
         None => None,
     };
-    if previous.is_some() && !target.is_dir() {
-        return Err("UmbraNet уже зарегистрирован в Windows. Для переустановки выберите прежнюю существующую папку.".into());
+    if let Some(old) = previous.as_ref() {
+        let same = target.is_dir() && same_path(&target, old)?;
+        if !same {
+            // A different destination is permitted only when neither app executable remains.
+            // Do not delete or silently transfer any data from the previous directory.
+            let exists = |name: &str| {
+                old.join(name)
+                    .try_exists()
+                    .map_err(|e| format!("Не удалось проверить прежнюю установку: {e}"))
+            };
+            if exists("umbranet-wifi.exe")? || exists("uninstall.exe")? {
+                return Err("UmbraNet уже установлен в другой папке. Для сохранения данных выберите прежнюю папку: автоматический перенос установленной программы пока не поддерживается.".into());
+            }
+            if !confirm_reinstall(old, PreviousState::IncompleteElsewhere) {
+                return Err("Установка отменена. Прежние файлы не изменены.".into());
+            }
+            previous = None;
+        }
     }
     fs::create_dir_all(&target).map_err(|e| {
         format!("Не удалось создать папку установки: {e}. Выберите доступную для записи папку.")
     })?;
     if let Some(old) = previous {
         if !same_path(&target, &old)? {
-            return Err("UmbraNet уже установлен в другой папке. Эта тестовая версия не переносит существующую установку автоматически.".into());
+            return Err("UmbraNet уже установлен в другой папке. Для сохранения стратегий и настроек выберите прежнюю папку: автоматический перенос пока не поддерживается.".into());
         }
-        if !target.join("uninstall.exe").is_file() || !target.join("umbranet-wifi.exe").is_file() {
-            return Err("Прежняя установка неполная. Новая установка остановлена, чтобы не затронуть данные.".into());
+        if !confirm_reinstall(&old, PreviousState::ReinstallHere) {
+            return Err("Переустановка отменена. Файлы не изменены.".into());
         }
     } else if fs::read_dir(&target)
         .map_err(|e| format!("Не удалось проверить папку: {e}"))?
@@ -421,11 +526,26 @@ pub fn open(path: &Path) -> Result<(), String> {
 mod tests {
     use super::*;
     #[test]
-    fn paths_must_be_local_absolute_and_not_drive_root() {
+    fn paths_must_be_local_and_resolve_to_a_dedicated_directory() {
         assert!(validate_path(r"C:\UmbraNet").is_ok());
         assert!(validate_path(r"D:\Program Files\UmbraNet").is_ok());
+        assert_eq!(
+            resolve_path(r"C:\", None).unwrap(),
+            PathBuf::from(r"C:\UmbraNet_WiFi")
+        );
+        assert_eq!(
+            resolve_path(r"C:\Users\test\Desktop", None).unwrap(),
+            PathBuf::from(r"C:\Users\test\Desktop\UmbraNet_WiFi")
+        );
+        assert_eq!(
+            resolve_path(r"C:\Users\test\Desktop\UmbraNet_WiFi", None).unwrap(),
+            PathBuf::from(r"C:\Users\test\Desktop\UmbraNet_WiFi")
+        );
+        assert_eq!(
+            resolve_path(r"C:\OldApp", Some(Path::new(r"C:\OldApp"))).unwrap(),
+            PathBuf::from(r"C:\OldApp")
+        );
         for invalid in [
-            r"C:\",
             r"C:relative",
             r"\\server\share\app",
             r"C:\a\..\b",
@@ -446,24 +566,50 @@ mod tests {
             existing_installation().unwrap().is_none(),
             "runner must have no prior UmbraNet installation"
         );
-        let target =
-            std::env::temp_dir().join(format!("Umbra Test {} с пробелом", std::process::id()));
+        let target = std::env::temp_dir()
+            .join(format!("Umbra Test {} с пробелом", std::process::id()))
+            .join("UmbraNet_WiFi");
         assert!(!target.exists());
-        fs::create_dir(&target).unwrap();
+        fs::create_dir_all(&target).unwrap();
         let sentinel = target.join("existing-user-file.txt");
         fs::write(&sentinel, b"do not overwrite").unwrap();
         static PAYLOAD: &[u8] = include_bytes!("../resources/backend-setup.exe");
-        assert!(install(&target.to_string_lossy(), false, PAYLOAD).is_err());
+        assert!(
+            install_with_confirmation(&target.to_string_lossy(), false, PAYLOAD, |_, _| true)
+                .is_err()
+        );
         assert_eq!(fs::read(&sentinel).unwrap(), b"do not overwrite");
         fs::remove_file(sentinel).unwrap();
-        install(&target.to_string_lossy(), false, PAYLOAD).unwrap();
+        install_with_confirmation(&target.to_string_lossy(), false, PAYLOAD, |_, _| true).unwrap();
         let strategy = target.join("strtegs_Uz/pass-through.json");
         let custom = target.join("strtegs_Uz/custom.json");
         let selection = target.join("core/dpi/selection.json");
         fs::write(&strategy, b"user strategy").unwrap();
         fs::write(&custom, b"user custom").unwrap();
         fs::write(&selection, b"user selection").unwrap();
-        install(&target.to_string_lossy(), false, PAYLOAD).unwrap();
+        install_with_confirmation(&target.to_string_lossy(), false, PAYLOAD, |_, _| true).unwrap();
+        assert_eq!(fs::read(&strategy).unwrap(), b"user strategy");
+        assert_eq!(fs::read(&custom).unwrap(), b"user custom");
+        assert_eq!(fs::read(&selection).unwrap(), b"user selection");
+        fs::remove_file(target.join("umbranet-wifi.exe")).unwrap();
+        fs::remove_file(target.join("uninstall.exe")).unwrap();
+        assert!(install_with_confirmation(
+            &target.to_string_lossy(),
+            false,
+            PAYLOAD,
+            |_, state| {
+                assert_eq!(state, PreviousState::ReinstallHere);
+                false
+            }
+        )
+        .is_err());
+        assert!(!target.join("umbranet-wifi.exe").exists());
+        assert_eq!(fs::read(&custom).unwrap(), b"user custom");
+        install_with_confirmation(&target.to_string_lossy(), false, PAYLOAD, |_, state| {
+            assert_eq!(state, PreviousState::ReinstallHere);
+            true
+        })
+        .unwrap();
         assert_eq!(fs::read(&strategy).unwrap(), b"user strategy");
         assert_eq!(fs::read(&custom).unwrap(), b"user custom");
         assert_eq!(fs::read(&selection).unwrap(), b"user selection");
@@ -479,6 +625,50 @@ mod tests {
         assert!(!target.join("umbranet-wifi.exe").exists());
         fs::remove_dir_all(&target).unwrap();
 
+        // An incomplete old folder with user data may be kept while installing to a new location.
+        assert!(existing_installation().unwrap().is_none());
+        let original = std::env::temp_dir()
+            .join(format!("Umbra-old-{}", std::process::id()))
+            .join("UmbraNet_WiFi");
+        fs::create_dir_all(original.join("strtegs_Uz")).unwrap();
+        let keep = original.join("strtegs_Uz/custom.json");
+        fs::write(&keep, b"keep original").unwrap();
+        let key = format!(r"HKCU\{}", UNINSTALL_KEY);
+        assert!(Command::new("reg.exe")
+            .args(["add", &key, "/v", "InstallLocation", "/t", "REG_SZ", "/d"])
+            .arg(&original)
+            .arg("/f")
+            .status()
+            .unwrap()
+            .success());
+        let new = std::env::temp_dir()
+            .join(format!("Umbra-new-{}", std::process::id()))
+            .join("UmbraNet_WiFi");
+        assert!(!new.exists());
+        assert!(
+            install_with_confirmation(&new.to_string_lossy(), false, PAYLOAD, |_, state| {
+                assert_eq!(state, PreviousState::IncompleteElsewhere);
+                false
+            })
+            .is_err()
+        );
+        assert!(!new.exists());
+        assert_eq!(fs::read(&keep).unwrap(), b"keep original");
+        install_with_confirmation(&new.to_string_lossy(), false, PAYLOAD, |_, state| {
+            assert_eq!(state, PreviousState::IncompleteElsewhere);
+            true
+        })
+        .unwrap();
+        assert_eq!(fs::read(&keep).unwrap(), b"keep original");
+        let mut uninstall = Command::new(new.join("uninstall.exe"));
+        uninstall
+            .arg("/S")
+            .raw_arg(format!("_?={}", new.display()))
+            .creation_flags(0x08000000);
+        assert!(uninstall.status().unwrap().success());
+        fs::remove_dir_all(&new).unwrap();
+        fs::remove_dir_all(&original).unwrap();
+
         // Simulate a stale registration on the isolated runner. The prior folder does not exist.
         assert!(existing_installation().unwrap().is_none());
         let missing = std::env::temp_dir().join(format!("Umbra-missing-{}", std::process::id()));
@@ -491,25 +681,32 @@ mod tests {
             .status()
             .unwrap();
         assert!(status.success());
-        let target = std::env::temp_dir().join(format!("Umbra-stale-test-{}", std::process::id()));
+        let target = std::env::temp_dir()
+            .join(format!("Umbra-stale-test-{}", std::process::id()))
+            .join("UmbraNet_WiFi");
         assert!(!target.exists());
-        assert!(
-            install_with_confirmation(&target.to_string_lossy(), false, PAYLOAD, |old| {
+        assert!(install_with_confirmation(
+            &target.to_string_lossy(),
+            false,
+            PAYLOAD,
+            |old, state| {
+                assert_eq!(state, PreviousState::MissingFolder);
                 assert_eq!(old, missing);
                 false
-            })
-            .is_err()
-        );
+            }
+        )
+        .is_err());
         assert!(!target.exists(), "cancel must not create the destination");
         assert_eq!(
             existing_installation().unwrap().as_deref(),
             Some(missing.as_path())
         );
-        fs::create_dir(&target).unwrap();
+        fs::create_dir_all(&target).unwrap();
         let sentinel = target.join("do-not-overwrite.txt");
         fs::write(&sentinel, b"keep").unwrap();
         assert!(
-            install_with_confirmation(&target.to_string_lossy(), false, PAYLOAD, |_| true).is_err()
+            install_with_confirmation(&target.to_string_lossy(), false, PAYLOAD, |_, _| true)
+                .is_err()
         );
         assert_eq!(fs::read(&sentinel).unwrap(), b"keep");
         assert_eq!(
@@ -517,7 +714,7 @@ mod tests {
             Some(missing.as_path())
         );
         fs::remove_file(sentinel).unwrap();
-        install_with_confirmation(&target.to_string_lossy(), false, PAYLOAD, |_| true).unwrap();
+        install_with_confirmation(&target.to_string_lossy(), false, PAYLOAD, |_, _| true).unwrap();
         assert_eq!(
             existing_installation().unwrap().as_deref(),
             Some(target.as_path())

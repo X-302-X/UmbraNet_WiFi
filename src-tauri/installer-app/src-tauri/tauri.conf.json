@@ -18,5 +18,5 @@
     }],
     "security": { "csp": "default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; connect-src ipc: http://ipc.localhost https://ipc.localhost; object-src 'none'; base-uri 'none'" }
   },
-  "bundle": { "active": false, "icon": ["../../icons/icon.ico"] }
+  "bundle": { "active": false, "icon": ["icons/setup.ico"] }
 }

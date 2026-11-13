@@ -7,6 +7,18 @@
   let index = 0, ready = false, busy = false;
   const next = document.querySelector("#next"), back = document.querySelector("#back"), path = document.querySelector("#install-path"), error = document.querySelector("#general-error"), openFolder = document.querySelector("#open-folder");
   const showError = text => { error.textContent = text || ""; error.hidden = !text; };
+  let previewRequest = 0;
+  async function updatePathPreview() {
+    const request = ++previewRequest;
+    const preview = document.querySelector("#resolved-preview");
+    const value = path.value.trim();
+    if (!value || typeof invoke !== "function") { preview.textContent = ""; return; }
+    try {
+      const resolved = await invoke("setup_resolve_path", { path: value });
+      if (request === previewRequest) preview.textContent = `Будет установлено: ${resolved}`;
+    } catch (_) { if (request === previewRequest) preview.textContent = ""; }
+  }
+  path.addEventListener("input", updatePathPreview);
   const render = () => {
     document.querySelectorAll("[data-stage]").forEach(el => { el.hidden = el.dataset.stage !== stages[index]; });
     document.querySelectorAll("[data-step]").forEach(el => { const n = Number(el.dataset.step); el.classList.toggle("active", n === Math.min(index, 2) && index !== 3); el.classList.toggle("done", n < Math.min(index, 2) || index === 3); });
@@ -21,7 +33,7 @@
   };
   async function initialize() {
     if (typeof invoke !== "function") { showError("Это окно работает только в установщике Windows."); return; }
-    try { path.value = await invoke("setup_suggested_path"); ready = true; }
+    try { path.value = await invoke("setup_suggested_path"); ready = true; updatePathPreview(); }
     catch (e) { showError(String(e)); }
     render();
   }
@@ -32,8 +44,10 @@
     if(index === 1) {
       if(!path.value.trim()) { document.querySelector("#path-error").hidden = false; path.focus(); return; }
       document.querySelector("#path-error").hidden = true;
-      busy = true; index = 2; render();
+      busy = true; render();
       try {
+        path.value = await invoke("setup_resolve_path", { path: path.value.trim() });
+        index = 2; render();
         const installed = await invoke("setup_install", { path: path.value, shortcuts: document.querySelector("#shortcut").checked });
         path.value = installed;
         document.querySelector("#summary-path").textContent = installed;
@@ -50,7 +64,7 @@
   back.addEventListener("click", () => { if(!busy) { showError(""); index = 0; render(); } });
   document.querySelector("#browse").addEventListener("click", async () => {
     if(busy) return;
-    try { const selected = await invoke("setup_choose_folder"); if(selected) { path.value = selected; document.querySelector("#path-error").hidden = true; } }
+    try { const selected = await invoke("setup_choose_folder"); if(selected) { path.value = await invoke("setup_resolve_path", { path: selected }); updatePathPreview(); document.querySelector("#path-error").hidden = true; } }
     catch(e) { showError(String(e)); }
   });
   openFolder.addEventListener("click", async () => { try { await invoke("setup_open", { application: false }); } catch(e) { showError(String(e)); } });
