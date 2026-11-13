@@ -49,10 +49,17 @@ jobs:
           }
           Get-AuthenticodeSignature "$driver/WinDivert64.sys" | Format-List Status, StatusMessage, SignerCertificate
           $package = Join-Path $env:RUNNER_TEMP "UmbraNet"
-          $driverDest = Join-Path $package "core/dpi/driver"
+          $driverDest = Join-Path $package "data/core/dpi/driver"
           New-Item -ItemType Directory -Force -Path $driverDest | Out-Null
           Copy-Item "src-tauri/target/x86_64-pc-windows-msvc/release/umbranet-wifi.exe" $package
           Copy-Item "$driver/*" $driverDest
+          $strategyDest = Join-Path $package "strtegs_Uz"
+          New-Item -ItemType Directory -Force -Path $strategyDest | Out-Null
+          Copy-Item "strtegs_Uz/*.json" $strategyDest
+          foreach ($file in $expected.Keys) {
+            $actual = (Get-FileHash "$driverDest/$file" -Algorithm SHA256).Hash.ToLowerInvariant()
+            if ($actual -ne $expected[$file]) { throw "Incorrect packaged WinDivert file: $file" }
+          }
 
       - name: Upload application
         uses: actions/upload-artifact@v4
