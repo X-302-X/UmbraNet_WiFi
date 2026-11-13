@@ -83,3 +83,15 @@ fn active_file_failure_reports_warning_but_preserves_committed_selection() {
     assert!(restored.warning.is_none());
     assert!(restored.domains.contains("ok.example"));
 }
+
+#[test]
+fn view_includes_domains_for_selected_services_only() {
+    let dir = Temp::new();
+    let mut store = Store::open(&dir.0).unwrap();
+    store.apply("service", "discord", true).unwrap();
+    let view = store.view().unwrap();
+    assert!(view.service_domains["discord"].contains(&"discord.com".to_string()));
+    assert!(!view.service_domains.contains_key("youtube"));
+    store.apply("service", "discord", false).unwrap();
+    assert!(store.view().unwrap().service_domains.is_empty());
+}

@@ -25,7 +25,10 @@ fn app_root() -> Result<PathBuf, String> {
 
 #[tauri::command]
 pub fn dpi_get(state: State<'_, DpiState>) -> Result<View, String> {
-    let locked = state.0.lock().map_err(|_| "Хранилище DPI недоступно".to_string())?;
+    let locked = state
+        .0
+        .lock()
+        .map_err(|_| "Хранилище DPI недоступно".to_string())?;
     match &*locked {
         Ok(store) => store.view(),
         Err(error) => Err(error.clone()),
@@ -33,8 +36,16 @@ pub fn dpi_get(state: State<'_, DpiState>) -> Result<View, String> {
 }
 
 #[tauri::command]
-pub fn dpi_apply(state: State<'_, DpiState>, action: String, value: String, enabled: bool) -> Result<View, String> {
-    let mut locked = state.0.lock().map_err(|_| "Хранилище DPI недоступно".to_string())?;
+pub async fn dpi_apply(
+    state: State<'_, DpiState>,
+    action: String,
+    value: String,
+    enabled: bool,
+) -> Result<View, String> {
+    let mut locked = state
+        .0
+        .lock()
+        .map_err(|_| "Хранилище DPI недоступно".to_string())?;
     match &mut *locked {
         Ok(store) => store.apply(&action, &value, enabled),
         Err(error) => Err(error.clone()),

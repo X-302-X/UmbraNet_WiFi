@@ -1,7 +1,7 @@
 use crate::catalog::Catalog;
 use crate::selection::{atomic_write, Selection, PROTECTED_BROWSERS};
 use serde::{Deserialize, Serialize};
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 use std::io::ErrorKind;
 use std::path::{Path, PathBuf};
@@ -24,6 +24,7 @@ pub struct View {
     pub processes: BTreeSet<String>,
     pub protected_processes: BTreeSet<String>,
     pub active_domains: BTreeSet<String>,
+    pub service_domains: BTreeMap<String, Vec<String>>,
     pub warning: Option<String>,
 }
 
@@ -96,6 +97,17 @@ impl Store {
             processes: self.selection.manual_processes().clone(),
             protected_processes: PROTECTED_BROWSERS.iter().map(|p| p.to_string()).collect(),
             active_domains: self.selection.active_domains(&self.catalog)?,
+            service_domains: self
+                .selection
+                .selected_services()
+                .iter()
+                .filter_map(|id| {
+                    self.catalog
+                        .services
+                        .get(id)
+                        .map(|service| (id.clone(), service.domains.clone()))
+                })
+                .collect(),
             warning: self.warning.clone(),
         })
     }

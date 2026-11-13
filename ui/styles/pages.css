@@ -162,14 +162,39 @@
 .topbar-actions .action-start { min-width: 140px; font-size: calc(13px * var(--font-scale, 1)); }
 #routing .routing-layout { flex: 1; min-height: 0; }
 
-/* The dispatcher keeps its own scroll area when resized. */
+/* Dispatcher rows mirror the original vertical task list. */
 #routing .task-panel { display: flex; flex-direction: column; }
 #routing .task-panel .input-row, #routing .task-panel .subhead, .dispatcher-handle { flex: none; }
-.dispatcher-entries { min-height: 0; overflow-y: auto; display: flex; flex-wrap: wrap; align-content: flex-start; gap: 5px; padding: 5px 3px 4px; }
-.dispatcher-chip { display: inline-flex; align-items: center; gap: 5px; max-width: 100%; padding: 3px 6px; border: 1px solid var(--border); border-radius: 7px; color: var(--text); font-size: calc(11px * var(--font-scale, 1)); overflow-wrap: anywhere; }
-.dispatcher-chip small { color: var(--muted); font-size: calc(9px * var(--font-scale, 1)); white-space: nowrap; }
-.dispatcher-remove { border: 0; background: transparent; color: var(--muted); padding: 0 2px; font-size: 16px; line-height: 1; cursor: pointer; }
+#routing .task-panel .input-row .action { min-width: 100px; }
+#routing .task-panel .subhead { margin: 7px 3px 4px; }
+.dispatcher-filter { flex: none; margin: 0 3px 5px; width: calc(100% - 6px); min-height: 30px; padding: 5px 8px; font-size: calc(11px * var(--font-scale, 1)); }
+.dispatcher-entries { min-height: 0; overflow-y: auto; overflow-x: hidden; display: flex; flex-direction: column; gap: 5px; padding: 0 3px 4px; scrollbar-width: thin; }
+.dispatcher-row { display: flex; align-items: center; gap: 8px; flex: none; min-height: 36px; padding: 2px 7px; border: 1px solid var(--border); border-radius: calc(9px * var(--radius-scale, 1)); background: #ffffff08; }
+.dispatcher-row:hover { border-color: var(--purple); background: color-mix(in srgb, var(--purple) 10%, transparent); }
+.dispatcher-icon { display: grid; place-items: center; width: 22px; flex: none; font-size: 14px; }
+.dispatcher-kind { flex: none; min-width: 65px; text-align: center; border: 1px solid currentColor; border-radius: 7px; padding: 3px 5px; font-size: calc(10px * var(--font-scale, 1)); font-weight: 700; }
+.dispatcher-kind.is-domain { color: var(--cyan); }
+.dispatcher-kind.is-process { color: #ffab62; }
+.dispatcher-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-family: Consolas, monospace; font-size: calc(11px * var(--font-scale, 1)); }
+.dispatcher-source { flex: 0 1 auto; max-width: 32%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--cyan); font-size: calc(10px * var(--font-scale, 1)); font-weight: 700; }
+.dispatcher-remove, .dispatcher-lock, .dispatcher-shared { flex: none; display: grid; place-items: center; width: 25px; height: 25px; border: 0; background: transparent; color: var(--muted); padding: 0; font-size: 16px; line-height: 1; }
+.dispatcher-remove { cursor: pointer; }
 .dispatcher-remove:hover { color: #ff7a9a; }
-.dispatcher-remove:disabled { cursor: not-allowed; opacity: .5; }
-.dispatcher-message { flex: none; padding: 4px 3px 0; font-size: calc(10px * var(--font-scale, 1)); color: var(--muted); }
+.dispatcher-lock { font-size: 12px; cursor: default; }
+.dispatcher-shared { cursor: help; }
+.dispatcher-message { flex: none; padding: 4px 3px; font-size: calc(10px * var(--font-scale, 1)); color: var(--muted); }
 .dispatcher-message.is-error { color: #ff8da2; }
+.process-overlay { position: fixed; z-index: 1000; inset: 0; display: grid; place-items: center; padding: 18px; background: #000a; }
+.process-overlay[hidden] { display: none; }
+.process-dialog { width: min(480px, 100%); max-height: min(520px, 85vh); display: flex; flex-direction: column; gap: 10px; background: #141321; box-shadow: 0 16px 45px #0009; }
+.process-dialog .panel-head h3 { margin: 0; }
+.process-close { background: transparent; border: 0; color: var(--muted); font-size: 22px; cursor: pointer; }
+.process-dialog .hint { margin: 0; }
+.process-list { min-height: 0; overflow-y: auto; display: flex; flex-direction: column; gap: 4px; }
+.process-choice { flex: none; text-align: left; border: 1px solid var(--border); border-radius: 8px; background: #ffffff08; color: var(--text); padding: 8px 10px; cursor: pointer; }
+.process-choice:hover, .process-choice:focus-visible { border-color: var(--purple); }
+.system-status { display: flex; justify-content: space-between; gap: 12px; align-items: center; font-size: calc(12px * var(--font-scale, 1)); }
+.system-status strong { color: var(--muted); }
+.system-status .status-positive { color: #58d9a2; }
+.system-status .status-negative { color: #ff9b9b; }
+@media (max-width: 900px) { #routing .task-panel .input-row .action { min-width: 0; } }

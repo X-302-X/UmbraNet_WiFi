@@ -8,7 +8,7 @@
   const minimum = 80;
   const title = container.querySelector(".page-title");
   const catalogMinimum = () => 130 + (title ? title.offsetHeight : 0);
-  let preferred = 175;
+  let preferred = 255;
   let drag = null;
 
   try {
