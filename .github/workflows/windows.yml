@@ -12,26 +12,23 @@ jobs:
   build:
     name: Windows x64
     runs-on: windows-latest
-    timeout-minutes: 45
+    timeout-minutes: 60
     steps:
       - uses: actions/checkout@v4
-
       - uses: actions/setup-node@v4
         with:
           node-version: '22'
-
       - uses: dtolnay/rust-toolchain@stable
         with:
           targets: x86_64-pc-windows-msvc
-
       - name: Cache Rust dependencies
         uses: Swatinem/rust-cache@v2
         with:
-          workspaces: src-tauri -> target
-
+          workspaces: |
+            src-tauri -> target
+            src-tauri/installer-app/src-tauri -> target
       - name: Test DPI model
         run: cargo test --locked --manifest-path core/dpi/Cargo.toml
-
       - name: Check WinDivert files
         shell: pwsh
         run: |
@@ -45,21 +42,46 @@ jobs:
             if ($actual -ne $expected[$file]) { throw "Incorrect WinDivert file: $file" }
           }
           Get-AuthenticodeSignature "$driver/WinDivert64.sys" | Format-List Status, StatusMessage, SignerCertificate
-
       - name: Build Windows installer
         run: npx --yes --package=@tauri-apps/cli@2.12.4 tauri build --target x86_64-pc-windows-msvc --bundles nsis -- --locked
-
       - name: Test installer layout and data safety
         shell: pwsh
         run: |
           $files = @(Get-ChildItem 'src-tauri/target/x86_64-pc-windows-msvc/release/bundle/nsis/*-setup.exe')
           if ($files.Count -ne 1) { throw "Expected exactly one installer, found $($files.Count)" }
           & ./src-tauri/windows/smoke-installer.ps1 -Installer $files[0].FullName
+      - name: Stage verified installation backend
+        shell: pwsh
+        run: |
+          $files = @(Get-ChildItem 'src-tauri/target/x86_64-pc-windows-msvc/release/bundle/nsis/*-setup.exe')
+          if ($files.Count -ne 1) { throw "Expected exactly one installation backend" }
+          $dest = 'src-tauri/installer-app/src-tauri/resources'
+          New-Item -ItemType Directory -Force -Path $dest | Out-Null
+          Copy-Item $files[0].FullName "$dest/backend-setup.exe"
 
-      - name: Upload installer
+      - name: Test custom installer backend on Windows
+        shell: pwsh
+        env:
+          UMBRA_INSTALLER_SMOKE: '1'
+        run: cargo test --locked --target x86_64-pc-windows-msvc --manifest-path src-tauri/installer-app/src-tauri/Cargo.toml
+
+      - name: Build modern installer window
+        working-directory: src-tauri/installer-app
+        run: npx --yes --package=@tauri-apps/cli@2.12.4 tauri build --target x86_64-pc-windows-msvc --no-bundle -- --locked
+
+      - name: Prepare modern installer artifact
+        shell: pwsh
+        run: |
+          $built = 'src-tauri/installer-app/src-tauri/target/x86_64-pc-windows-msvc/release/umbranet-setup.exe'
+          $backend = 'src-tauri/installer-app/src-tauri/resources/backend-setup.exe'
+          if (!(Test-Path $built -PathType Leaf)) { throw 'Modern installer executable not found' }
+          if ((Get-Item $built).Length -le (Get-Item $backend).Length) { throw 'Modern installer does not contain the backend' }
+          Copy-Item $built (Join-Path $env:RUNNER_TEMP 'UmbraNet-Setup.exe')
+
+      - name: Upload modern installer
         uses: actions/upload-artifact@v4
         with:
           name: UmbraNet_WiFi-Windows-Setup
-          path: src-tauri/target/x86_64-pc-windows-msvc/release/bundle/nsis/*-setup.exe
+          path: ${{ runner.temp }}/UmbraNet-Setup.exe
           if-no-files-found: error
           retention-days: 7
