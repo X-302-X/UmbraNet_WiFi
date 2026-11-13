@@ -29,13 +29,35 @@ jobs:
         with:
           workspaces: src-tauri -> target
 
+      - name: Test DPI model
+        run: cargo test --locked --manifest-path core/dpi/Cargo.toml
+
       - name: Build transparent window
         run: npx --yes --package=@tauri-apps/cli@2.12.4 tauri build --target x86_64-pc-windows-msvc --no-bundle -- --locked
 
-      - name: Upload executable
+      - name: Prepare application and WinDivert files
+        shell: pwsh
+        run: |
+          $driver = "core/dpi/driver"
+          $expected = @{
+            "WinDivert.dll" = "c1e060ee19444a259b2162f8af0f3fe8c4428a1c6f694dce20de194ac8d7d9a2"
+            "WinDivert64.sys" = "8da085332782708d8767bcace5327a6ec7283c17cfb85e40b03cd2323a90ddc2"
+          }
+          foreach ($file in $expected.Keys) {
+            $actual = (Get-FileHash "$driver/$file" -Algorithm SHA256).Hash.ToLowerInvariant()
+            if ($actual -ne $expected[$file]) { throw "Incorrect WinDivert file: $file" }
+          }
+          Get-AuthenticodeSignature "$driver/WinDivert64.sys" | Format-List Status, StatusMessage, SignerCertificate
+          $package = Join-Path $env:RUNNER_TEMP "UmbraNet"
+          $driverDest = Join-Path $package "core/dpi/driver"
+          New-Item -ItemType Directory -Force -Path $driverDest | Out-Null
+          Copy-Item "src-tauri/target/x86_64-pc-windows-msvc/release/umbranet-wifi.exe" $package
+          Copy-Item "$driver/*" $driverDest
+
+      - name: Upload application
         uses: actions/upload-artifact@v4
         with:
           name: UmbraNet_WiFi-Windows-x64
-          path: src-tauri/target/x86_64-pc-windows-msvc/release/umbranet-wifi.exe
+          path: ${{ runner.temp }}/UmbraNet/
           if-no-files-found: error
           retention-days: 7
