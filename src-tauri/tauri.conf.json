@@ -41,8 +41,7 @@
       "../core/dpi/driver/WinDivert.dll": "core/dpi/driver/WinDivert.dll",
       "../core/dpi/driver/WinDivert64.sys": "core/dpi/driver/WinDivert64.sys",
       "../core/dpi/driver/NOTICE.txt": "core/dpi/driver/NOTICE.txt",
-      "../core/dpi/driver/LICENSE-WinDivert.txt": "core/dpi/driver/LICENSE-WinDivert.txt",
-      "../strtegs_Uz/pass-through.json": "core/dpi/defaults/pass-through.json"
+      "../core/dpi/driver/LICENSE-WinDivert.txt": "core/dpi/driver/LICENSE-WinDivert.txt"
     },
     "windows": {
       "nsis": {

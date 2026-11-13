@@ -13,8 +13,8 @@ function Require-File([string]$path) {
 Install-Test
 @('umbranet-wifi.exe', 'uninstall.exe', 'core/dpi/driver/WinDivert.dll',
   'core/dpi/driver/WinDivert64.sys', 'core/dpi/driver/LICENSE-WinDivert.txt',
-  'core/dpi/driver/NOTICE.txt', 'core/dpi/defaults/pass-through.json',
-  'strtegs_Uz/pass-through.json') | ForEach-Object { Require-File $_ }
+  'core/dpi/driver/NOTICE.txt', 'strtegs_Uz/pass-through.json') | ForEach-Object { Require-File $_ }
+if (Test-Path (Join-Path $install 'core/dpi/defaults/pass-through.json')) { throw 'Duplicate default strategy is present' }
 if (!(Test-Path (Join-Path $install 'logs') -PathType Container)) { throw 'Missing logs directory' }
 $expected = @{
     'core/dpi/driver/WinDivert.dll' = 'c1e060ee19444a259b2162f8af0f3fe8c4428a1c6f694dce20de194ac8d7d9a2'

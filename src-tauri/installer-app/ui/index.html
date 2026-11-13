@@ -1,0 +1,49 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Установка UmbraNet</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<div class="window">
+  <div class="titlebar" data-tauri-drag-region><span class="tiny-u" data-tauri-drag-region>U</span><span class="titlebar-name" data-tauri-drag-region>UmbraNet</span><span class="titlebar-divider" data-tauri-drag-region>/</span><span data-tauri-drag-region>Установка</span><div class="window-icons" ><button class="win-btn" id="minimize" aria-label="Свернуть" type="button">−</button><button class="win-btn" id="close" aria-label="Закрыть" type="button">×</button></div></div>
+  <div class="body">
+    <aside class="sidebar" aria-label="Этапы установки">
+      <div class="brand"><span>U</span>mbraNet</div><div class="brand-sub">Установка приложения</div>
+      <div class="steps">
+        <div class="step active" data-step="0"><span class="step-circle">01</span><div><strong>Знакомство</strong><small>Начало установки</small></div></div>
+        <div class="step" data-step="1"><span class="step-circle">02</span><div><strong>Настройка</strong><small>Папка и параметры</small></div></div>
+        <div class="step" data-step="2"><span class="step-circle">03</span><div><strong>Установка</strong><small>Почти готово</small></div></div>
+      </div>
+      <div class="side-bottom"><span class="signal"></span><b>Установка UmbraNet</b><br>Настройте приложение под себя.</div>
+    </aside>
+    <main class="main">
+      <div class="topline"><span id="section-label">Начало установки</span><span class="status" id="status">Подготовка</span></div>
+      <div id="general-error" class="general-error" role="alert" hidden></div><div class="content">
+        <section class="stage" data-stage="welcome">
+          <div class="hero"><div class="hero-copy"><div class="eyebrow">Приветствуем</div><h1>Установка<br>UmbraNet</h1><p class="intro">Всё необходимое — в одном месте. Настройте установку за пару шагов и начните работу.</p></div><div class="hero-art" aria-hidden="true"><div class="hero-orbit"></div><div class="monogram">U</div></div></div>
+          <div class="feature-row"><div class="feature"><div class="feature-icon"><svg viewBox="0 0 24 24"><path d="M3 7h7l2 2h9v10H3z"/><path d="M3 9V6h7l2 2"/></svg></div><div><b>Ваша папка</b><small>Выберите место установки</small></div></div><div class="feature"><div class="feature-icon"><svg viewBox="0 0 24 24"><path d="M12 3 5 6v5c0 5 3 8 7 10 4-2 7-5 7-10V6z"/><path d="m9 12 2 2 4-4"/></svg></div><div><b>Понятный процесс</b><small>Несколько простых шагов</small></div></div></div>
+        </section>
+        <section class="stage" data-stage="settings" hidden>
+          <div class="eyebrow">Подготовка</div><h1 class="form-title">Всё по вашему</h1><p class="intro form-copy">Выберите папку для приложения. Стратегии и другие рабочие файлы будут находиться внутри неё.</p>
+          <label class="field-label" for="install-path">Папка установки</label><div class="path-row"><input class="path-input" id="install-path" placeholder="Выберите папку установки" spellcheck="false"><button class="btn browse" id="browse" type="button">Обзор…</button></div><p class="field-tip">Для новой установки выберите пустую папку для UmbraNet. Для переустановки — прежнюю папку.</p><p id="path-error" class="warning" role="alert" hidden>Укажите папку установки.</p>
+          <label class="option"><input type="checkbox" id="shortcut" checked><span><b>Создать ярлыки на рабочем столе и в меню «Пуск»</b><small>Быстрый доступ к UmbraNet</small></span></label><div class="info-line"><span class="info-mark">i</span>Для запуска UmbraNet потребуются права администратора.</div>
+        </section>
+        <section class="stage" data-stage="installing" hidden>
+          <div class="eyebrow">Установка</div><h1 class="form-title">Всё готовится</h1><p class="intro form-copy">Установка выполняется. Пожалуйста, не закрывайте это окно.</p>
+          <div class="progress-top"><span class="progress-title" id="progress-title">Установка…</span></div><div class="track" role="progressbar" aria-label="Выполняется установка"><div class="fill busy" id="fill"></div></div><div class="progress-hint">Не запускайте приложение до завершения установки.</div>
+        </section>
+        <section class="stage" data-stage="complete" hidden>
+          <div class="complete-icon" aria-hidden="true">✓</div><div class="eyebrow">Готово</div><h1 class="form-title">Всё на своих местах</h1><p class="intro form-copy">UmbraNet установлен и готов к запуску.</p><div class="summary"><b>Папка установки</b><span id="summary-path"></span></div>
+        </section>
+      </div>
+      <div class="bottom"><div class="bottom-note"><b>UmbraNet</b><br><span id="bottom-note">Нажмите «Продолжить», чтобы посмотреть настройки.</span></div><div class="actions"><button class="btn" id="open-folder" type="button" hidden>Открыть папку</button><button class="btn" id="back" type="button" hidden>Назад</button><button class="btn primary" id="next" type="button" disabled>Продолжить <span class="arrow">→</span></button></div></div>
+
+    </main>
+  </div>
+</div>
+<script src="app.js" defer></script>
+</body>
+</html>
