@@ -6,6 +6,8 @@ mod dpi_bridge;
 #[path = "bridge/system.rs"]
 mod system;
 
+mod appearance;
+
 #[tauri::command]
 fn admin_status() -> Result<bool, String> {
     system::is_elevated()
@@ -27,7 +29,10 @@ fn main() {
             dpi_bridge::dpi_diagnostic_start,
             dpi_bridge::dpi_diagnostic_stop,
             admin_status,
-            running_processes
+            running_processes,
+            appearance::appearance_load,
+            appearance::appearance_save,
+            appearance::appearance_migrate
         ])
         .run(tauri::generate_context!())
         .expect("Не удалось запустить UmbraNet_WiFi");

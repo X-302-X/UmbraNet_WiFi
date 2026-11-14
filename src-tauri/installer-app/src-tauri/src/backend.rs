@@ -153,12 +153,9 @@ pub fn suggested_path() -> Result<String, String> {
             Err(error) => return Err(format!("Не удалось проверить прежнюю папку: {error}")),
         }
     }
-    let base = std::env::var_os("LOCALAPPDATA")
-        .ok_or("Не удалось определить стандартную папку пользователя.")?;
-    Ok(PathBuf::from(base)
-        .join("UmbraNet_WiFi")
-        .to_string_lossy()
-        .into_owned())
+    Ok(known_folder(&FOLDERID_Desktop)
+        .map(|desktop| desktop.join("UmbraNet_WiFi").to_string_lossy().into_owned())
+        .unwrap_or_default())
 }
 
 fn validate_path(value: &str) -> Result<PathBuf, String> {
@@ -194,8 +191,32 @@ pub fn resolved_path(value: &str) -> Result<String, String> {
         .into_owned())
 }
 
+fn known_folder(id: &windows_sys::core::GUID) -> Option<PathBuf> {
+    let mut value = ptr::null_mut();
+    let status = unsafe { SHGetKnownFolderPath(id, 0, ptr::null_mut(), &mut value) };
+    if status < 0 || value.is_null() {
+        return None;
+    }
+    let mut len = 0;
+    unsafe {
+        while len < 32768 && *value.add(len) != 0 {
+            len += 1;
+        }
+    }
+    let result = if len < 32768 {
+        Some(PathBuf::from(OsString::from_wide(unsafe {
+            std::slice::from_raw_parts(value, len)
+        })))
+    } else {
+        None
+    };
+    unsafe {
+        CoTaskMemFree(value.cast());
+    }
+    result
+}
+
 fn is_shared_location(path: &Path) -> bool {
-    // Never treat a Windows special folder or disk root as the app's own directory.
     if path.parent().is_none() {
         return true;
     }
@@ -205,28 +226,7 @@ fn is_shared_location(path: &Path) -> bool {
         &FOLDERID_Documents,
         &FOLDERID_Downloads,
     ] {
-        let mut value = ptr::null_mut();
-        let status = unsafe { SHGetKnownFolderPath(id, 0, ptr::null_mut(), &mut value) };
-        if status < 0 || value.is_null() {
-            continue;
-        }
-        let mut len = 0;
-        unsafe {
-            while len < 32768 && *value.add(len) != 0 {
-                len += 1;
-            }
-        }
-        let known = if len < 32768 {
-            Some(PathBuf::from(OsString::from_wide(unsafe {
-                std::slice::from_raw_parts(value, len)
-            })))
-        } else {
-            None
-        };
-        unsafe {
-            CoTaskMemFree(value.cast());
-        }
-        if let Some(known) = known {
+        if let Some(known) = known_folder(id) {
             if path
                 .to_string_lossy()
                 .eq_ignore_ascii_case(&known.to_string_lossy())

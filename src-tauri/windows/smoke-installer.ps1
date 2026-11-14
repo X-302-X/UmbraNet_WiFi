@@ -1,6 +1,16 @@
 param([Parameter(Mandatory = $true)][string]$Installer)
 $ErrorActionPreference = 'Stop'
 $install = Join-Path $env:RUNNER_TEMP ("UmbraInstallTest-" + [guid]::NewGuid().ToString('N'))
+$appearanceDir = Join-Path $env:APPDATA 'UmbraNet_WiFi'
+$appearanceFile = Join-Path $appearanceDir 'appearance.json'
+if (Test-Path -LiteralPath $appearanceDir) { throw 'Runner must not have pre-existing appearance settings' }
+New-Item -ItemType Directory -Path $appearanceDir | Out-Null
+Set-Content -LiteralPath $appearanceFile -Value '{"transparency":17}' -NoNewline
+function Require-Appearance {
+    if (!(Test-Path -LiteralPath $appearanceFile -PathType Leaf) -or (Get-Content -Raw -LiteralPath $appearanceFile) -ne '{"transparency":17}') {
+        throw 'Installation or uninstall modified saved appearance settings'
+    }
+}
 
 function Install-Test {
     $proc = Start-Process -FilePath $Installer -ArgumentList "/S /NS /D=$install" -Wait -PassThru
@@ -30,6 +40,7 @@ Set-Content -LiteralPath (Join-Path $install 'strtegs_Uz/custom.json') -Value 'u
 Set-Content -LiteralPath (Join-Path $install 'core/dpi/selection.json') -Value 'user selection' -NoNewline
 Set-Content -LiteralPath (Join-Path $install 'logs/test.txt') -Value 'user log' -NoNewline
 Install-Test
+Require-Appearance
 foreach ($pair in @(@('strtegs_Uz/pass-through.json','user strategy'), @('strtegs_Uz/custom.json','user custom'), @('core/dpi/selection.json','user selection'), @('logs/test.txt','user log'))) {
     if ((Get-Content -Raw -LiteralPath (Join-Path $install $pair[0])) -ne $pair[1]) { throw "Reinstall changed user file: $($pair[0])" }
 }
@@ -41,4 +52,7 @@ foreach ($path in @('strtegs_Uz/pass-through.json','strtegs_Uz/custom.json','cor
     Require-File $path
 }
 if (Test-Path (Join-Path $install 'umbranet-wifi.exe')) { throw 'Uninstall did not remove the executable' }
+Require-Appearance
+Remove-Item -LiteralPath $appearanceFile
+Remove-Item -LiteralPath $appearanceDir
 Write-Host 'Installer, reinstall, uninstall and user-data preservation: OK'

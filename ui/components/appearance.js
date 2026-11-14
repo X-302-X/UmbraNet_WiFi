@@ -3,7 +3,7 @@
 (() => {
   const key = "umbranet-wifi.appearance.v1";
   const defaults = {
-    transparency: 32, panelTransparency: 0, buttonTransparency: 0, fieldTransparency: 0,
+    transparency: 0, panelTransparency: 100, buttonTransparency: 0, fieldTransparency: 100,
     accent: "#8b6dff", glow: true, colorSync: true, neonTop: "#8b6dff", neonBottom: "#8b6dff",
     neonBrightness: 52, neonSize: 42, elementGlow: 100, backgroundAnimation: "particles",
     backgroundSpeed: 100, particleCount: 8, motion: true, shake: true, shakeStrength: 35,
@@ -47,26 +47,99 @@
   const animationOptions = [...animationList.querySelectorAll("[role=option]")];
   let state = { ...defaults };
 
-  try {
-    const stored = JSON.parse(localStorage.getItem(key) || "null");
-    if (stored && typeof stored === "object") {
-      for (const [property, min, max] of Object.values(ranges)) {
-        const v = stored[property];
-        if (typeof v === "number" && Number.isFinite(v)) state[property] = Math.round(Math.max(min, Math.min(max, v)));
-      }
-      for (const property of Object.values(colorFields)) {
-        if (typeof stored[property] === "string" && /^#[0-9a-f]{6}$/i.test(stored[property])) state[property] = stored[property].toLowerCase();
-      }
-      for (const property of [...Object.values(toggles), "colorSync"]) {
-        if (typeof stored[property] === "boolean") state[property] = stored[property];
-      }
-      if (animations.includes(stored.backgroundAnimation)) state.backgroundAnimation = stored.backgroundAnimation;
+  function applyStored(stored) {
+    if (!stored || typeof stored !== "object" || Array.isArray(stored)) return false;
+    for (const [property, min, max] of Object.values(ranges)) {
+      const v = stored[property];
+      if (typeof v === "number" && Number.isFinite(v)) state[property] = Math.round(Math.max(min, Math.min(max, v)));
     }
-  } catch (_) { /* Use defaults when stored preferences cannot be read. */ }
+    for (const property of Object.values(colorFields)) {
+      if (typeof stored[property] === "string" && /^#[0-9a-f]{6}$/i.test(stored[property])) state[property] = stored[property].toLowerCase();
+    }
+    for (const property of [...Object.values(toggles), "colorSync"]) {
+      if (typeof stored[property] === "boolean") state[property] = stored[property];
+    }
+    if (animations.includes(stored.backgroundAnimation)) state.backgroundAnimation = stored.backgroundAnimation;
+    return true;
+  }
 
+  let localSettings = null;
+  try {
+    localSettings = JSON.parse(localStorage.getItem(key) || "null");
+    applyStored(localSettings);
+  } catch (_) { /* Keep defaults if the WebView cache cannot be read. */ }
+
+  const invoke = window.__TAURI_INTERNALS__?.invoke;
+  const section = document.getElementById("appearance");
+  const saveStatus = document.getElementById("appearance-save-status");
+  let durableReady = false, durableAllowed = true, pendingSave = null, saveRunning = false;
+  function persistenceWarning(message) {
+    saveStatus.textContent = message;
+    saveStatus.hidden = !message;
+  }
+  async function flushSaves() {
+    if (!durableReady || !durableAllowed || saveRunning || typeof invoke !== "function") return;
+    saveRunning = true;
+    try {
+      while (pendingSave !== null) {
+        const value = pendingSave;
+        pendingSave = null;
+        try {
+          await invoke("appearance_save", { value });
+          persistenceWarning("");
+        } catch (error) {
+          persistenceWarning(`Не удалось сохранить настройки оформления: ${String(error)}`);
+          break;
+        }
+      }
+    } finally { saveRunning = false; }
+  }
   function save() {
-    try { localStorage.setItem(key, JSON.stringify(state)); }
-    catch (_) { /* Controls still work for the current session. */ }
+    const value = JSON.stringify(state);
+    try { localStorage.setItem(key, value); }
+    catch (_) { persistenceWarning("Не удалось сохранить настройки в хранилище окна."); }
+    pendingSave = value;
+    flushSaves();
+  }
+  async function loadDurableSettings() {
+    if (typeof invoke !== "function") return;
+    section.inert = true;
+    section.setAttribute("aria-busy", "true");
+    try {
+      const value = await invoke("appearance_load");
+      if (value !== null) {
+        if (typeof value !== "string") throw new Error("Получен неверный формат настроек.");
+        const stored = JSON.parse(value);
+        if (!stored || typeof stored !== "object" || Array.isArray(stored)) throw new Error("Получен неверный формат настроек.");
+        state = { ...defaults };
+        applyStored(stored);
+        try { localStorage.setItem(key, JSON.stringify(state)); } catch (_) { /* Persistent file remains authoritative. */ }
+      } else if (localSettings && typeof localSettings === "object" && !Array.isArray(localSettings)) {
+        // One-time migration from the existing WebView profile; never replace an existing file.
+        const migrated = await invoke("appearance_migrate", { value: JSON.stringify(state) });
+        if (migrated === false) {
+          const current = await invoke("appearance_load");
+          if (typeof current !== "string") throw new Error("Не удалось прочитать существующие настройки.");
+          const stored = JSON.parse(current);
+          if (!stored || typeof stored !== "object" || Array.isArray(stored)) throw new Error("Получен неверный формат настроек.");
+          state = { ...defaults };
+          applyStored(stored);
+          try { localStorage.setItem(key, JSON.stringify(state)); } catch (_) { /* The file remains authoritative. */ }
+        } else if (migrated !== true) {
+          throw new Error("Не удалось проверить перенос настроек.");
+        }
+      }
+      persistenceWarning("");
+    } catch (error) {
+      durableAllowed = false;
+      persistenceWarning(`Не удалось загрузить или сохранить настройки оформления: ${String(error)}`);
+    } finally {
+      durableReady = true;
+      render();
+      section.inert = false;
+      section.removeAttribute("aria-busy");
+      flushSaves();
+    }
   }
   function foreground(hex) {
     const rgb = [1, 3, 5].map(i => {
@@ -179,4 +252,5 @@
   });
   document.getElementById("reset-appearance").addEventListener("click", () => { state = { ...defaults }; update(); });
   render();
+  loadDurableSettings();
 })();
