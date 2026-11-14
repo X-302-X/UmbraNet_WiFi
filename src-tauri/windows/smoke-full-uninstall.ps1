@@ -3,37 +3,36 @@ param(
     [Parameter(Mandatory = $true)][string]$AppearanceDir
 )
 $ErrorActionPreference = 'Stop'
-# This test controls the actual NSIS confirmation page, not a simulated switch.
-Add-Type -TypeDefinition @'
-using System;
-using System.Text;
-using System.Collections.Generic;
-using System.Runtime.InteropServices;
-public static class UmbraUninstallUi {
-    public delegate bool EnumProc(IntPtr h, IntPtr l);
-    [DllImport("user32.dll")] static extern bool EnumWindows(EnumProc callback, IntPtr l);
-    [DllImport("user32.dll")] static extern bool EnumChildWindows(IntPtr h, EnumProc callback, IntPtr l);
-    [DllImport("user32.dll")] static extern uint GetWindowThreadProcessId(IntPtr h, out uint pid);
-    [DllImport("user32.dll")] static extern bool IsWindowVisible(IntPtr h);
-    [DllImport("user32.dll", CharSet = CharSet.Unicode)] static extern int GetClassName(IntPtr h, StringBuilder s, int size);
-    [DllImport("user32.dll", CharSet = CharSet.Unicode)] static extern int GetWindowText(IntPtr h, StringBuilder s, int size);
-    [DllImport("user32.dll")] static extern int GetWindowLong(IntPtr h, int index);
-    [DllImport("user32.dll")] public static extern IntPtr GetDlgItem(IntPtr h, int id);
-    [DllImport("user32.dll")] public static extern IntPtr SendMessage(IntPtr h, uint message, IntPtr w, IntPtr l);
-    [DllImport("user32.dll")] public static extern bool PostMessage(IntPtr h, uint message, IntPtr w, IntPtr l);
-    public static IntPtr[] Dialogs(uint pid) {
-        var result = new List<IntPtr>();
-        EnumWindows((h,l) => { uint id; GetWindowThreadProcessId(h, out id); var cls = new StringBuilder(64); GetClassName(h, cls, cls.Capacity); if (id == pid && IsWindowVisible(h) && cls.ToString() == "#32770") result.Add(h); return true; }, IntPtr.Zero);
-        return result.ToArray();
-    }
-    public static IntPtr Checkbox(IntPtr dialog) {
-        IntPtr result = IntPtr.Zero;
-        EnumChildWindows(dialog, (h,l) => { var cls = new StringBuilder(64); GetClassName(h, cls, cls.Capacity); if (cls.ToString() == "Button" && (GetWindowLong(h, -16) & 15) == 3) { result = h; return false; } return true; }, IntPtr.Zero);
-        return result;
-    }
-    public static string Text(IntPtr h) { var text = new StringBuilder(256); GetWindowText(h, text, text.Capacity); return text.ToString(); }
+
+# Recompile the exact Tauri-generated NSIS script as a *test-only* installer.
+# It sets the state normally read from the confirmation checkbox and skips the
+# warning dialog, so the deletion logic can be exercised in a headless runner.
+# The production installer and its confirmation remain unchanged.
+$generated = Join-Path $PSScriptRoot '../target/x86_64-pc-windows-msvc/release/nsis/x64/installer.nsi'
+$compiler = Join-Path $env:LOCALAPPDATA 'tauri/NSIS/makensis.exe'
+if (!(Test-Path -LiteralPath $generated -PathType Leaf)) { throw "Tauri-generated NSIS script not found: $generated" }
+if (!(Test-Path -LiteralPath $compiler -PathType Leaf)) { throw "Tauri NSIS compiler not found: $compiler" }
+$source = [System.IO.File]::ReadAllText((Resolve-Path -LiteralPath $generated).Path)
+$checkboxRead = 'SendMessage $DeleteAppDataCheckbox ${BM_GETCHECK} 0 0 $DeleteAppDataCheckboxState'
+if (!$source.Contains($checkboxRead)) { throw 'Tauri checkbox state handler changed; review full-uninstall test' }
+$sectionPattern = '(?ms)^Section Uninstall\s+!ifmacrodef NSIS_HOOK_PREUNINSTALL\s+!insertmacro NSIS_HOOK_PREUNINSTALL\s+!endif'
+$sections = [regex]::Matches($source, $sectionPattern)
+if ($sections.Count -ne 1) { throw 'Tauri uninstall hook layout changed; review full-uninstall test' }
+$outputPattern = '(?m)^!define OUTFILE "[^"\r\n]*"'
+if ([regex]::Matches($source, $outputPattern).Count -ne 1) { throw 'Tauri NSIS output definition changed' }
+$testInstaller = Join-Path $env:RUNNER_TEMP ("umbra-full-delete-test-" + [guid]::NewGuid().ToString('N') + '.exe')
+$testScript = Join-Path (Split-Path -Parent $generated) 'installer-full-delete-test.nsi'
+$source = $source.Replace($sections[0].Value, "Section Uninstall`r`n  StrCpy `$DeleteAppDataCheckboxState 1")
+$source = [regex]::Replace($source, $outputPattern, [System.Text.RegularExpressions.MatchEvaluator]{ param($match) '!define OUTFILE "' + $testInstaller + '"' })
+[System.IO.File]::WriteAllText($testScript, $source, [System.Text.UTF8Encoding]::new($true))
+try {
+    & $compiler /V2 $testScript
+    if ($LASTEXITCODE -ne 0 -or !(Test-Path -LiteralPath $testInstaller -PathType Leaf)) { throw 'Failed to compile test-only NSIS installer' }
+    $proc = Start-Process -FilePath $testInstaller -ArgumentList "/S /NS /D=$Install" -Wait -PassThru
+    if ($proc.ExitCode -ne 0) { throw "Test-only installer failed: $($proc.ExitCode)" }
+} finally {
+    Remove-Item -LiteralPath $testScript, $testInstaller -Force -ErrorAction SilentlyContinue
 }
-'@
 
 $roamingWebview = Join-Path $env:APPDATA 'org.umbranet.wifi'
 $localWebview = Join-Path $env:LOCALAPPDATA 'org.umbranet.wifi'
@@ -46,57 +45,14 @@ New-Item -ItemType Directory -Force -Path (Join-Path $Install 'data/core/dpi') |
 foreach ($path in @('core/dpi/services.json','core/dpi/active-domains.txt', 'data/core/dpi/selection.json','data/core/dpi/services.json','data/core/dpi/active-domains.txt')) {
     Set-Content -LiteralPath (Join-Path $Install $path) -Value 'test' -NoNewline
 }
-# Unrelated files are outside the application-owned paths and must not be deleted.
+# Files outside the application-owned paths must not be deleted.
 Set-Content -LiteralPath (Join-Path $Install 'unrelated-user-file.txt') -Value 'keep' -NoNewline
 $uninstall = Join-Path $Install 'uninstall.exe'
-$proc = Start-Process -FilePath $uninstall -ArgumentList "_?=$Install" -PassThru
-try {
-    $main = [IntPtr]::Zero
-    $checkbox = [IntPtr]::Zero
-    $deadline = [DateTime]::UtcNow.AddSeconds(30)
-    do {
-        if ($proc.HasExited) { throw 'Uninstaller exited before its confirmation page appeared' }
-        foreach ($dialog in [UmbraUninstallUi]::Dialogs([uint32]$proc.Id)) {
-            $candidate = [UmbraUninstallUi]::Checkbox($dialog)
-            if ($candidate -ne [IntPtr]::Zero) { $main = $dialog; $checkbox = $candidate; break }
-        }
-        if ($checkbox -eq [IntPtr]::Zero) { Start-Sleep -Milliseconds 100 }
-    } while ($checkbox -eq [IntPtr]::Zero -and [DateTime]::UtcNow -lt $deadline)
-    if ($checkbox -eq [IntPtr]::Zero) { throw 'Could not find the real uninstall data checkbox' }
-    # Set the same check state that clicking the UI would produce; the page leave handler reads it.
-    [void][UmbraUninstallUi]::SendMessage($checkbox, 0xF1, [IntPtr]1, [IntPtr]::Zero)
-    if ([UmbraUninstallUi]::SendMessage($checkbox, 0xF0, [IntPtr]::Zero, [IntPtr]::Zero).ToInt32() -ne 1) { throw 'Could not check uninstall data checkbox' }
-    $next = [UmbraUninstallUi]::GetDlgItem($main, 1)
-    if ($next -eq [IntPtr]::Zero) { throw 'Could not find uninstall confirmation button' }
-    [void][UmbraUninstallUi]::PostMessage($main, 0x111, [IntPtr]1, $next)
-    $confirmed = $false
-    $deadline = [DateTime]::UtcNow.AddSeconds(30)
-    while (!$proc.HasExited -and [DateTime]::UtcNow -lt $deadline) {
-        foreach ($dialog in [UmbraUninstallUi]::Dialogs([uint32]$proc.Id)) {
-            if ($dialog -ne $main -and !$confirmed) {
-                $yes = [UmbraUninstallUi]::GetDlgItem($dialog, 6)
-                if ($yes -ne [IntPtr]::Zero) {
-                    [void][UmbraUninstallUi]::PostMessage($dialog, 0x111, [IntPtr]6, $yes)
-                    $confirmed = $true
-                }
-            } elseif ($dialog -eq $main -and $confirmed) {
-                $button = [UmbraUninstallUi]::GetDlgItem($dialog, 1)
-                $text = [UmbraUninstallUi]::Text($button).Replace('&', '')
-                if ($text -in @('Close', 'Закрыть')) { [void][UmbraUninstallUi]::PostMessage($dialog, 0x111, [IntPtr]1, $button) }
-            }
-        }
-        Start-Sleep -Milliseconds 100
-        $proc.Refresh()
-    }
-    if (!$proc.HasExited) { throw 'Uninstaller did not finish after confirming full removal' }
-    if (!$confirmed) { throw 'Full-removal warning did not appear' }
-    if ($proc.ExitCode -ne 0) { throw "Full uninstaller failed: $($proc.ExitCode)" }
-} finally {
-    if (!$proc.HasExited) { Stop-Process -Id $proc.Id -Force -ErrorAction SilentlyContinue }
-}
+$proc = Start-Process -FilePath $uninstall -ArgumentList "/S _?=$Install" -Wait -PassThru
+if ($proc.ExitCode -ne 0) { throw "Full-delete test uninstaller failed: $($proc.ExitCode)" }
 foreach ($path in @($AppearanceDir, $roamingWebview, $localWebview, (Join-Path $Install 'strtegs_Uz'), (Join-Path $Install 'logs'), (Join-Path $Install 'core/dpi/selection.json'), (Join-Path $Install 'core/dpi/services.json'), (Join-Path $Install 'core/dpi/active-domains.txt'), (Join-Path $Install 'data/core/dpi/selection.json'), (Join-Path $Install 'data/core/dpi/services.json'), (Join-Path $Install 'data/core/dpi/active-domains.txt'))) {
     if (Test-Path -LiteralPath $path) { throw "Full uninstall left application data: $path" }
 }
 if (!(Test-Path -LiteralPath (Join-Path $Install 'unrelated-user-file.txt') -PathType Leaf)) { throw 'Full uninstall deleted an unrelated file' }
 Remove-Item -LiteralPath $Install -Recurse -Force
-Write-Host 'Interactive full uninstall, confirmation and user-data cleanup: OK'
+Write-Host 'Headless full-uninstall data cleanup: OK (UI confirmation requires manual Windows test)'

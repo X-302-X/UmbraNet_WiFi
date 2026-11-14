@@ -54,7 +54,7 @@ foreach ($path in @('strtegs_Uz/pass-through.json','strtegs_Uz/custom.json','cor
 if (Test-Path (Join-Path $install 'umbranet-wifi.exe')) { throw 'Uninstall did not remove the executable' }
 Require-Appearance
 Write-Host 'Installer, reinstall and uninstall without data deletion: OK'
-# Reinstall over preserved data, then exercise the real checkbox and warning dialog.
+# Reinstall over preserved data, then test the full-delete branch without a desktop.
 Install-Test
 Require-Appearance
 & (Join-Path $PSScriptRoot 'smoke-full-uninstall.ps1') -Install $install -AppearanceDir $appearanceDir
