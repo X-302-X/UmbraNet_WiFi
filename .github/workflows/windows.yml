@@ -75,6 +75,8 @@ jobs:
           $built = 'src-tauri/installer-app/src-tauri/target/x86_64-pc-windows-msvc/release/umbranet-setup.exe'
           $backend = 'src-tauri/installer-app/src-tauri/resources/backend-setup.exe'
           if (!(Test-Path $built -PathType Leaf)) { throw 'Modern installer executable not found' }
+          python src-tauri/windows/verify-setup-icon.py $built 'src-tauri/installer-app/src-tauri/icons/setup.ico'
+          if ($LASTEXITCODE -ne 0) { throw 'Installer icon verification failed' }
           if ((Get-Item $built).Length -le (Get-Item $backend).Length) { throw 'Modern installer does not contain the backend' }
           Copy-Item $built (Join-Path $env:RUNNER_TEMP 'UmbraNet-Setup.exe')
 
