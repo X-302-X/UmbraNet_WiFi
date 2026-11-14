@@ -1,6 +1,8 @@
 "use strict";
 
 (() => {
+  // WebView's browser context menu is not part of the application interface.
+  document.addEventListener("contextmenu", event => event.preventDefault(), true);
   const nav = document.querySelector("#navigation");
   const app = document.querySelector(".app");
   const pages = [...document.querySelectorAll(".page")];

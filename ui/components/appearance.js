@@ -4,7 +4,10 @@
   const key = "umbranet-wifi.appearance.v1";
   const defaults = {
     transparency: 0, panelTransparency: 100, buttonTransparency: 0, fieldTransparency: 100,
-    accent: "#8b6dff", glow: true, colorSync: true, neonTop: "#8b6dff", neonBottom: "#8b6dff",
+    accent: "#8b6dff", borderColor: "#302b46",
+    vpnColor: "#8b6dff", comboColor: "#6366f1", dpiColor: "#ff6478",
+    restartColor: "#171325", startColor: "#8b6dff", stopColor: "#ed5969",
+    glow: true, colorSync: true, neonTop: "#8b6dff", neonBottom: "#8b6dff",
     neonBrightness: 52, neonSize: 42, elementGlow: 100, backgroundAnimation: "particles",
     backgroundSpeed: 100, particleCount: 8, motion: true, shake: true, shakeStrength: 35,
     shakeSpeed: 100, uiSpeed: 100, textSize: 100, cornerRadius: 100, density: 100, sidebarWidth: 190,
@@ -28,16 +31,20 @@
     "sidebar-width": ["sidebarWidth", 175, 230, " px"],
   };
   const groups = {
-    controls: ["buttonTransparency", "fieldTransparency"],
+    controls: ["buttonTransparency", "fieldTransparency", "vpnColor", "comboColor", "dpiColor", "restartColor", "startColor", "stopColor"],
     background: ["transparency", "backgroundAnimation", "backgroundSpeed", "particleCount"],
     panels: ["panelTransparency"],
-    colors: ["accent", "glow", "colorSync", "neonTop", "neonBottom", "neonBrightness", "neonSize", "elementGlow"],
+    colors: ["accent", "borderColor", "glow", "colorSync", "neonTop", "neonBottom", "neonBrightness", "neonSize", "elementGlow"],
     navigation: ["sidebarWidth", "shake", "shakeStrength", "shakeSpeed"],
     general: ["motion", "uiSpeed", "textSize", "cornerRadius", "density"],
   };
   const root = document.documentElement;
   const app = document.querySelector(".app");
-  const colorFields = { "accent-color": "accent", "neon-top": "neonTop", "neon-bottom": "neonBottom" };
+  const colorFields = {
+    "accent-color": "accent", "border-color": "borderColor", "neon-top": "neonTop", "neon-bottom": "neonBottom",
+    "color-vpn": "vpnColor", "color-combo": "comboColor", "color-dpi": "dpiColor",
+    "color-restart": "restartColor", "color-start": "startColor", "color-stop": "stopColor",
+  };
   const toggles = { "glow-toggle": "glow", "motion-toggle": "motion", "shake-toggle": "shake" };
   const animations = ["particles", "waves", "fireflies", "stars", "orbits", "off"];
   const animationSelect = document.querySelector("#animation-select");
@@ -146,7 +153,18 @@
       const x = parseInt(hex.slice(i, i + 2), 16) / 255;
       return x <= 0.04045 ? x / 12.92 : ((x + 0.055) / 1.055) ** 2.4;
     });
-    return 0.2126 * rgb[0] + 0.7152 * rgb[1] + 0.0722 * rgb[2] > 0.179 ? "#171024" : "#ffffff";
+    const luminance = 0.2126 * rgb[0] + 0.7152 * rgb[1] + 0.0722 * rgb[2];
+    const dark = [23, 16, 36].map(value => {
+      const x = value / 255;
+      return x <= 0.04045 ? x / 12.92 : ((x + 0.055) / 1.055) ** 2.4;
+    });
+    const darkLuminance = 0.2126 * dark[0] + 0.7152 * dark[1] + 0.0722 * dark[2];
+    return (luminance + 0.05) / (darkLuminance + 0.05) > 1.05 / (luminance + 0.05) ? "#171024" : "#ffffff";
+  }
+  function buttonForeground(hex, background = [6, 6, 12]) {
+    const opacity = (100 - state.buttonTransparency) / 100;
+    const rgb = background.map((base, index) => Math.round(base * (1 - opacity) + parseInt(hex.slice(1 + index * 2, 3 + index * 2), 16) * opacity));
+    return foreground(`#${rgb.map(value => value.toString(16).padStart(2, "0")).join("")}`);
   }
   function render() {
     for (const [id, [prop, , , unit]] of Object.entries(ranges)) {
@@ -175,7 +193,12 @@
       "--panel-opacity": (100 - state.panelTransparency) / 100,
       "--button-opacity": (100 - state.buttonTransparency) / 100,
       "--field-opacity": (100 - state.fieldTransparency) / 100,
-      "--purple": state.accent, "--accent-foreground": foreground(state.accent),
+      "--purple": state.accent, "--accent-foreground": foreground(state.accent), "--border": state.borderColor,
+      "--vpn-color": state.vpnColor, "--combo-color": state.comboColor, "--dpi-color": state.dpiColor,
+      "--restart-color": state.restartColor, "--start-color": state.startColor, "--stop-color": state.stopColor,
+      "--vpn-foreground": buttonForeground(state.vpnColor, [25, 25, 37]), "--combo-foreground": buttonForeground(state.comboColor, [25, 25, 37]),
+      "--dpi-foreground": buttonForeground(state.dpiColor, [25, 25, 37]), "--restart-foreground": buttonForeground(state.restartColor),
+      "--start-foreground": buttonForeground(state.startColor), "--stop-foreground": buttonForeground(state.stopColor),
       "--neon-top": state.neonTop, "--neon-bottom": state.colorSync ? state.neonTop : state.neonBottom,
       "--neon-brightness": state.neonBrightness / 100, "--neon-size": `${state.neonSize}%`,
       "--element-glow": state.elementGlow / 100, "--ambient-duration": `${500 / state.backgroundSpeed}s`,

@@ -19,6 +19,17 @@
     empty.hidden = found !== 0;
   });
 
+  const notice = document.querySelector("#action-notice");
+  let noticeTimer;
+  for (const [selector, label] of [[".action-start", "Старт"], [".action-restart", "Перезапуск"]]) {
+    document.querySelector(selector).addEventListener("click", () => {
+      notice.textContent = `«${label}» пока не подключён.`;
+      notice.hidden = false;
+      clearTimeout(noticeTimer);
+      noticeTimer = setTimeout(() => { notice.hidden = true; }, 4000);
+    });
+  }
+
   // Mode and route pickers are visual until network components are connected.
   const modes = [...document.querySelectorAll("[data-mode]")];
   const comboTabs = [...document.querySelectorAll("[data-route-tab]")];
