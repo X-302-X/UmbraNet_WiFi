@@ -5,7 +5,7 @@
   const defaults = {
     transparency: 0, panelTransparency: 100, buttonTransparency: 0, fieldTransparency: 100,
     accent: "#8b6dff", borderColor: "#302b46",
-    vpnColor: "#8b6dff", comboColor: "#6366f1", dpiColor: "#ff6478",
+    vpnColor: "#8b6dff", comboColor: "#8b6dff", dpiColor: "#8b6dff",
     restartColor: "#171325", startColor: "#8b6dff", stopColor: "#ed5969",
     glow: true, colorSync: true, neonTop: "#8b6dff", neonBottom: "#8b6dff",
     neonBrightness: 52, neonSize: 42, elementGlow: 100, backgroundAnimation: "particles",
@@ -179,6 +179,7 @@
     animationCurrent.textContent = selected.textContent;
     for (const option of animationOptions) option.setAttribute("aria-selected", String(option === selected));
     for (const swatch of document.querySelectorAll("[data-accent]")) swatch.setAttribute("aria-pressed", String(swatch.dataset.accent === state.accent));
+    for (const swatch of document.querySelectorAll("[data-border]")) swatch.setAttribute("aria-pressed", String(swatch.dataset.border === state.borderColor));
     for (const [id, prop] of Object.entries(toggles)) {
       const button = document.getElementById(id);
       button.classList.toggle("active", state[prop]);
@@ -217,6 +218,7 @@
   for (const [id, [prop]] of Object.entries(ranges)) document.getElementById(id).addEventListener("input", event => { state[prop] = Number(event.target.value); update(); });
   for (const [id, prop] of Object.entries(colorFields)) document.getElementById(id).addEventListener("input", event => { state[prop] = event.target.value.toLowerCase(); update(); });
   for (const swatch of document.querySelectorAll("[data-accent]")) swatch.addEventListener("click", () => { state.accent = swatch.dataset.accent; update(); });
+  for (const swatch of document.querySelectorAll("[data-border]")) swatch.addEventListener("click", () => { state.borderColor = swatch.dataset.border; update(); });
   for (const [id, prop] of Object.entries(toggles)) document.getElementById(id).addEventListener("click", () => { state[prop] = !state[prop]; update(); });
   document.getElementById("color-sync").addEventListener("change", event => { state.colorSync = event.target.checked; update(); });
   function closeAnimationList(restoreFocus = false) {

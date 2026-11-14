@@ -112,7 +112,7 @@ input, textarea, [contenteditable="true"] { user-select: text; -webkit-user-sele
 /* Independent outline and top-bar button colours. */
 .button-color-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(145px, 1fr)); gap: 8px; margin-top: 6px; }
 .button-color-grid label { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 8px 10px; border: 1px solid var(--border); border-radius: calc(9px * var(--radius-scale, 1)); }
-.button-color-grid input[type="color"], #border-color { flex: none; width: 38px; height: 30px; padding: 2px; border: 1px solid var(--border); border-radius: 7px; cursor: pointer; }
+.button-color-grid input[type="color"] { flex: none; width: 38px; height: 30px; padding: 2px; border: 1px solid var(--border); border-radius: 7px; cursor: pointer; }
 .button-color-hint { margin: 8px 0 0 !important; }
 .sidebar-toggle:hover, .action:not(:disabled):hover, .mode-switch button:hover,
 .picker-row[aria-pressed="true"], .subtab.active, .dispatcher-row:hover,
@@ -120,8 +120,8 @@ input, textarea, [contenteditable="true"] { user-select: text; -webkit-user-sele
 .nav-item.selected { border-color: var(--border); }
 .badge, .empty-box { border-color: var(--border); }
 .mode-switch button[data-mode="vpn"] { --mode-color: var(--vpn-color, #8b6dff); --mode-foreground: var(--vpn-foreground, #fff); }
-.mode-switch button[data-mode="combo"] { --mode-color: var(--combo-color, #6366f1); --mode-foreground: var(--combo-foreground, #fff); }
-.mode-switch button[data-mode="dpi"] { --mode-color: var(--dpi-color, #ff6478); --mode-foreground: var(--dpi-foreground, #fff); }
+.mode-switch button[data-mode="combo"] { --mode-color: var(--combo-color, #8b6dff); --mode-foreground: var(--combo-foreground, #fff); }
+.mode-switch button[data-mode="dpi"] { --mode-color: var(--dpi-color, #8b6dff); --mode-foreground: var(--dpi-foreground, #fff); }
 .mode-switch button:not([aria-pressed="true"]) {
   background: color-mix(in srgb, color-mix(in srgb, var(--mode-color) 18%, #171325) calc(var(--button-opacity, 1) * 100%), transparent);
 }

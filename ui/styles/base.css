@@ -544,6 +544,7 @@ html[data-surface="acrylic"] .app.no-glow {
   outline: 2px solid var(--purple);
   outline-offset: 2px;
 }
+.swatch.border-default { background: #302b46; }
 .swatch.violet { background: #8b6dff; }
 .swatch.blue { background: #70e4f3; }
 .swatch.pink { background: #e194e9; }

@@ -53,6 +53,19 @@ foreach ($path in @('strtegs_Uz/pass-through.json','strtegs_Uz/custom.json','cor
 }
 if (Test-Path (Join-Path $install 'umbranet-wifi.exe')) { throw 'Uninstall did not remove the executable' }
 Require-Appearance
-Remove-Item -LiteralPath $appearanceFile
-Remove-Item -LiteralPath $appearanceDir
-Write-Host 'Installer, reinstall, uninstall and user-data preservation: OK'
+Write-Host 'Installer, reinstall and uninstall without data deletion: OK'
+# Reinstall over preserved data, then exercise the real checkbox and warning dialog.
+Install-Test
+Require-Appearance
+& (Join-Path $PSScriptRoot 'smoke-full-uninstall.ps1') -Install $install -AppearanceDir $appearanceDir
+# A fresh installation after full removal must not revive prior data.
+Install-Test
+Require-File 'strtegs_Uz/pass-through.json'
+if (Test-Path -LiteralPath $appearanceDir) { throw 'Fresh install revived appearance data' }
+if (Test-Path -LiteralPath (Join-Path $install 'strtegs_Uz/custom.json')) { throw 'Fresh install revived user strategies' }
+if (Test-Path -LiteralPath (Join-Path $install 'core/dpi/selection.json')) { throw 'Fresh install revived selections' }
+if ((Get-Content -Raw -LiteralPath (Join-Path $install 'strtegs_Uz/pass-through.json')) -eq 'user strategy') { throw 'Fresh install revived modified strategy' }
+$proc = Start-Process -FilePath (Join-Path $install 'uninstall.exe') -ArgumentList "/S _?=$install" -Wait -PassThru
+if ($proc.ExitCode -ne 0) { throw 'Final test uninstall failed' }
+Remove-Item -LiteralPath $install -Recurse -Force
+Write-Host 'Fresh installation after full uninstall: OK'
