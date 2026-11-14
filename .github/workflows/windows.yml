@@ -70,6 +70,7 @@ jobs:
         run: npx --yes --package=@tauri-apps/cli@2.12.4 tauri build --target x86_64-pc-windows-msvc --no-bundle -- --locked
 
       - name: Prepare modern installer artifact
+        id: setup_artifact
         shell: pwsh
         run: |
           $built = 'src-tauri/installer-app/src-tauri/target/x86_64-pc-windows-msvc/release/umbranet-setup.exe'
@@ -78,12 +79,16 @@ jobs:
           python src-tauri/windows/verify-setup-icon.py $built 'src-tauri/installer-app/src-tauri/icons/setup.ico'
           if ($LASTEXITCODE -ne 0) { throw 'Installer icon verification failed' }
           if ((Get-Item $built).Length -le (Get-Item $backend).Length) { throw 'Modern installer does not contain the backend' }
-          Copy-Item $built (Join-Path $env:RUNNER_TEMP 'UmbraNet-Setup.exe')
+          $filename = "UmbraNet-Setup-$($env:GITHUB_RUN_NUMBER)"
+          if ($env:GITHUB_RUN_ATTEMPT -ne '1') { $filename += "-retry$($env:GITHUB_RUN_ATTEMPT)" }
+          $filename += '.exe'
+          Copy-Item $built (Join-Path $env:RUNNER_TEMP $filename)
+          "filename=$filename" >> $env:GITHUB_OUTPUT
 
       - name: Upload modern installer
         uses: actions/upload-artifact@v4
         with:
           name: UmbraNet_WiFi-Windows-Setup
-          path: ${{ runner.temp }}/UmbraNet-Setup.exe
+          path: ${{ runner.temp }}/${{ steps.setup_artifact.outputs.filename }}
           if-no-files-found: error
           retention-days: 7
