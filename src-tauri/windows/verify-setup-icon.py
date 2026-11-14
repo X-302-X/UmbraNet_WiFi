@@ -56,6 +56,22 @@ class PEIcons:
                 return target
         raise ValueError(f"resource {number} not found")
 
+    def explorer_primary_icon_id(self):
+        kind = self.entry(0, 14)
+        if not kind & 0x80000000:
+            raise ValueError("invalid icon group directory")
+        directory = self.root + (kind & 0x7FFFFFFF)
+        named = u16(self.data, directory + 12)
+        numeric = u16(self.data, directory + 14)
+        if named:
+            raise ValueError("Explorer would prefer a named icon group")
+        if not numeric:
+            raise ValueError("no numeric icon groups")
+        identifiers = [u32(self.data, directory + 16 + index * 8) for index in range(numeric)]
+        if any(identifier & 0x80000000 for identifier in identifiers):
+            raise ValueError("invalid numeric icon group")
+        return min(identifiers)
+
     def blob(self, resource_type, resource_id):
         kind = self.entry(0, resource_type)
         if not kind & 0x80000000:
@@ -122,7 +138,11 @@ def main():
     parser.add_argument("--group-id", type=int, default=32512)
     args = parser.parse_args()
     expected = fingerprint(ico_images(args.icon.read_bytes()))
-    actual = fingerprint(PEIcons(args.executable.read_bytes()).icon_images(args.group_id))
+    exe = PEIcons(args.executable.read_bytes())
+    selected = exe.explorer_primary_icon_id()
+    if selected != args.group_id:
+        raise SystemExit(f"Explorer would choose icon group {selected}, not {args.group_id}")
+    actual = fingerprint(exe.icon_images(args.group_id))
     if actual != expected:
         raise SystemExit("Setup executable icon does not match the installer icon")
     print(f"Setup executable contains the correct icon ({len(actual)} sizes)")
