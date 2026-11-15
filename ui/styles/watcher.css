@@ -34,38 +34,38 @@ html[data-surface="transparent"] .app[data-style="watcher"], html[data-surface="
 /* Eyes and messages are separate, short-lived layers behind the controls. */
 .watcher-eye-field { position: absolute; inset: 0; overflow: hidden; pointer-events: none; }
 /* Every eye has its own lifetime and one of four abrupt signal failures. */
-.watcher-eye { position: absolute; left: var(--eye-x); top: var(--eye-y); width: var(--eye-size); transform: translate(-50%, -50%) rotate(var(--eye-angle)); color: #cf2735; pointer-events: none; animation: eye-presence var(--eye-duration, 2s) linear both; }
-.watcher-eye svg { display: block; width: 100%; height: auto; filter: drop-shadow(0 0 3px #870c19); animation-duration: var(--eye-duration, 2s); animation-timing-function: steps(1, end); animation-fill-mode: both; }
-.watcher-eye[data-glitch="shift"] svg { animation-name: eye-shift; }
-.watcher-eye[data-glitch="slices"] svg { animation-name: eye-slices; }
-.watcher-eye[data-glitch="echo"] svg { animation-name: eye-echo; }
-.watcher-eye[data-glitch="tear"] svg { animation-name: eye-tear; }
+/* Independent arrivals, followed by an individually timed abrupt signal failure. */
+.watcher-eye { position: absolute; left: var(--eye-x); top: var(--eye-y); width: var(--eye-size); transform: translate(-50%, -50%) rotate(var(--eye-angle)); color: #cf2735; pointer-events: none; opacity: .7; animation: eye-arrival 170ms ease-out both; }
+.watcher-eye svg { display: block; width: 100%; height: auto; filter: drop-shadow(0 0 3px #870c19); }
+.watcher-eye.glitching { animation: eye-exit var(--glitch-duration, 240ms) steps(1, end) both; }
+.watcher-eye.glitching svg { animation-duration: var(--glitch-duration, 240ms); animation-timing-function: steps(1, end); animation-fill-mode: both; }
+.watcher-eye.glitching[data-glitch="shift"] svg { animation-name: eye-shift; }
+.watcher-eye.glitching[data-glitch="slices"] svg { animation-name: eye-slices; }
+.watcher-eye.glitching[data-glitch="echo"] svg { animation-name: eye-echo; }
+.watcher-eye.glitching[data-glitch="tear"] svg { animation-name: eye-tear; }
 .watcher-eye .eye-contour { stroke-width: 2.6; }
 .watcher-eye .eye-sketch { stroke-width: 1.8; opacity: .82; }
 .watcher-eye .eye-fine { stroke-width: 1.1; opacity: .5; }
 .watcher-eye .eye-pupil { stroke-width: 3; stroke-linecap: butt; }
-@keyframes eye-presence { 0% { opacity: 0; } 10%, 87% { opacity: .7; } 94% { opacity: .6; } 100% { opacity: 0; } }
+@keyframes eye-arrival { from { opacity: 0; } to { opacity: .7; } }
+@keyframes eye-exit { 0%, 75% { opacity: .7; } 90%, 100% { opacity: 0; } }
 @keyframes eye-shift {
-  0%, 78% { translate: 0; }
-  79% { translate: 12px 0; } 84% { translate: -10px 0; } 90% { translate: 6px 0; } 97%, 100% { translate: 0; }
+  0% { translate: 12px 0; } 26% { translate: -10px 0; } 55% { translate: 6px 0; } 85%, 100% { translate: 0; }
 }
 @keyframes eye-slices {
-  0%, 78% { clip-path: none; translate: 0; }
-  79% { clip-path: inset(0 0 53% 0); translate: 9px 0; }
-  85% { clip-path: inset(45% 0 0 0); translate: -10px 0; }
-  91% { clip-path: inset(24% 0 46% 0); translate: 5px 0; } 97%, 100% { clip-path: inset(100% 0 0 0); }
+  0% { clip-path: inset(0 0 53% 0); translate: 9px 0; }
+  30% { clip-path: inset(45% 0 0 0); translate: -10px 0; }
+  60% { clip-path: inset(24% 0 46% 0); translate: 5px 0; } 90%, 100% { clip-path: inset(100% 0 0 0); }
 }
 @keyframes eye-echo {
-  0%, 78% { translate: 0; filter: drop-shadow(0 0 3px #870c19); }
-  79% { translate: -5px 0; filter: drop-shadow(12px 0 #e31d2d) drop-shadow(-8px 0 #610613); }
-  86% { translate: 7px 0; filter: drop-shadow(-12px 0 #e31d2d) drop-shadow(7px 0 #610613); }
-  94%, 100% { translate: 0; filter: drop-shadow(0 0 1px #870c19); }
+  0% { translate: -5px 0; filter: drop-shadow(12px 0 #e31d2d) drop-shadow(-8px 0 #610613); }
+  35% { translate: 7px 0; filter: drop-shadow(-12px 0 #e31d2d) drop-shadow(7px 0 #610613); }
+  70%, 100% { translate: 0; filter: drop-shadow(0 0 1px #870c19); }
 }
 @keyframes eye-tear {
-  0%, 78% { clip-path: none; translate: 0; }
-  79% { clip-path: inset(0 30% 0 0); translate: -8px -3px; }
-  85% { clip-path: inset(0 0 0 38%); translate: 10px 4px; }
-  91% { clip-path: inset(35% 0 35% 0); translate: -4px 0; } 97%, 100% { clip-path: inset(100% 0 0 0); }
+  0% { clip-path: inset(0 30% 0 0); translate: -8px -3px; }
+  30% { clip-path: inset(0 0 0 38%); translate: 10px 4px; }
+  60% { clip-path: inset(35% 0 35% 0); translate: -4px 0; } 90%, 100% { clip-path: inset(100% 0 0 0); }
 }
 .watcher-scene { position: absolute; left: var(--scene-x, 55%); top: var(--scene-y, 45%); transform: translate(-50%, -50%) rotate(var(--scene-angle, 0deg)); opacity: 0; color: #c72232; font-family: Consolas, "Courier New", monospace; white-space: nowrap; }
 .watcher-message { color: #cd2938; font-size: clamp(12px, 1.5vw, 18px); letter-spacing: .09em; text-shadow: 1px 0 #3e070c, 0 0 10px #6a1019; }

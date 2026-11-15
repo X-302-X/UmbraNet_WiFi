@@ -108,7 +108,9 @@
     const size = 48 + Math.random() * 52;
     const angle = randomAngle();
     const box = position(size, size * .47, angle, boxes);
-    const duration = scaled(1550 + Math.random() * 1500, 1000);
+    // Each eye holds independently; the brief exit has its own duration.
+    const hold = scaled(900 + Math.random() * 3400, 600);
+    const glitchDuration = scaled(220 + Math.random() * 160, 150);
     // Avoid two successive eyes using the same exit, while retaining randomness.
     let glitch = Math.floor(Math.random() * 4);
     if (glitch === lastGlitch) glitch = (glitch + 1 + Math.floor(Math.random() * 3)) % 4;
@@ -118,15 +120,19 @@
     eye.style.setProperty("--eye-y", `${box.y / app.clientHeight * 100}%`);
     eye.style.setProperty("--eye-size", `${size.toFixed(1)}px`);
     eye.style.setProperty("--eye-angle", `${angle.toFixed(1)}deg`);
-    eye.style.setProperty("--eye-duration", `${duration}ms`);
+    eye.style.setProperty("--eye-duration", `${hold}ms`);
+    eye.style.setProperty("--glitch-duration", `${glitchDuration}ms`);
     field.append(eye);
     later(() => {
-      eye.remove();
-      if (enabled) {
-        const gap = field.childElementCount < 4 ? 0 : scaled(80 + Math.random() * 220, 50);
-        later(showEye, gap);
-      }
-    }, duration);
+      eye.classList.add("glitching");
+      later(() => {
+        eye.remove();
+        if (enabled) {
+          const gap = field.childElementCount < 4 ? 0 : scaled(60 + Math.random() * 750, 40);
+          later(showEye, gap);
+        }
+      }, glitchDuration);
+    }, hold);
   }
   function showMessage() {
     if (!enabled) return;
@@ -170,10 +176,13 @@
     if (enabled) {
       questionsBeforePhrase = 2;
       const count = 6 + Math.floor(Math.random() * 3);
-      let startDelay = 100;
-      for (let i = 0; i < count; i++) {
-        startDelay += 70 + Math.random() * 150;
-        later(showEye, startDelay);
+      // Spread the initial arrivals irregularly as well as the later lifetimes.
+      const arrivals = Array.from({ length: count }, () => 70 + Math.random() * 1050).sort((a, b) => a - b);
+      let lastArrival = 0;
+      for (const candidate of arrivals) {
+        const arrival = Math.max(candidate, lastArrival + 65 + Math.random() * 75);
+        later(showEye, arrival);
+        lastArrival = arrival;
       }
       later(showMessage, 1200);
     }
