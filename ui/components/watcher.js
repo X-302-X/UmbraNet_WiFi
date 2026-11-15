@@ -15,10 +15,15 @@
     const element = document.querySelector(selector);
     return { element, original: element.textContent, themed };
   });
-  const messages = ["He sees!", "Do you remember me?"];
+  const messages = [
+    "He sees!", "Do you remember me?", "I can see you.", "Don't look away.",
+    "Still here?", "Behind the screen.", "You are not alone.", "I never left.",
+    "I am watching.", "Look again.", "We remember you.", "There you are.",
+  ];
   let timer = null;
   let enabled = false;
-  let previousKind = "";
+  let eyesUntilMessage = 2 + Math.floor(Math.random() * 3);
+  let previousMessage = -1;
   let speed = 100;
 
   function stop() {
@@ -34,8 +39,13 @@
   function placeScene(kind) {
     const width = app.clientWidth;
     const height = app.clientHeight;
-    const sceneWidth = kind === "eyes" ? Math.max(190, Math.min(width * .26, 330)) : 250;
-    const sceneHeight = kind === "eyes" ? sceneWidth * .38 : 34;
+    const angle = (Math.random() < .5 ? -1 : 1) * (7 + Math.random() * 16);
+    const baseWidth = kind === "eyes" ? Math.max(150, Math.min(width * .20, 250)) : 250;
+    const baseHeight = kind === "eyes" ? baseWidth * .56 : 34;
+    const radians = Math.abs(angle) * Math.PI / 180;
+    const sceneWidth = baseWidth * Math.cos(radians) + baseHeight * Math.sin(radians);
+    const sceneHeight = baseWidth * Math.sin(radians) + baseHeight * Math.cos(radians);
+    scene.style.setProperty("--scene-angle", `${angle.toFixed(1)}deg`);
     const obstacles = [];
     for (const element of app.querySelectorAll("button, input, textarea, select")) {
       const rect = element.getBoundingClientRect();
@@ -67,18 +77,27 @@
   }
   function showScene() {
     if (!enabled) return;
-    const kind = previousKind === "eyes" ? "message" : "eyes";
-    previousKind = kind;
+    const kind = eyesUntilMessage > 0 ? "eyes" : "message";
+    if (kind === "eyes") eyesUntilMessage--;
+    else eyesUntilMessage = 2 + Math.floor(Math.random() * 3);
     scene.classList.remove("visible");
     scene.dataset.kind = kind;
     placeScene(kind);
-    if (kind === "message") message.textContent = `> ${messages[Math.floor(Math.random() * messages.length)]}`;
+    if (kind === "message") {
+      let index = Math.floor(Math.random() * messages.length);
+      if (index === previousMessage) index = (index + 1) % messages.length;
+      previousMessage = index;
+      message.textContent = `> ${messages[index]}`;
+    }
+    const duration = Math.max(2500, Math.min(12000, (kind === "eyes" ? 4600 : 4200) * 100 / speed));
+    scene.style.setProperty("--scene-duration", `${duration}ms`);
+    scene.style.setProperty("--typing-duration", `${Math.round(duration * .45)}ms`);
     void scene.offsetWidth;
     scene.classList.add("visible");
     timer = setTimeout(() => {
       scene.classList.remove("visible");
-      if (enabled) schedule((8500 + Math.random() * 11000) * 100 / speed);
-    }, 6800);
+      if (enabled) schedule((1200 + Math.random() * 1800) * 100 / speed);
+    }, duration);
   }
   function refresh() {
     speed = Math.max(25, Math.min(200, Number(app.dataset.watcherSpeed) || 100));
@@ -89,7 +108,7 @@
     if (nextEnabled === enabled) return;
     enabled = nextEnabled;
     stop();
-    if (enabled) schedule(2300);
+    if (enabled) schedule(900);
   }
   window.addEventListener("umbra-appearance", event => {
     speed = Math.max(25, Math.min(200, event.detail.speed || 100));
