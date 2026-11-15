@@ -1,0 +1,50 @@
+/* The world stays separate from the user's ordinary appearance. */
+.animation-options [role="option"][hidden] { display: none; }
+.preset-control { margin: 0 0 15px; }
+.preset-control > label { display: block; font-weight: 600; margin-bottom: 7px; }
+.preset-hint { margin: 7px 0 0; }
+.watcher-layer { display: none; position: absolute; inset: 0; z-index: 0; overflow: hidden; pointer-events: none; }
+.app[data-style="watcher"] { --cyan: #f06470; --pink: #dd3848; --muted: #b9a1a5; --faint: #876970; --text: #f2e7e9; --surface: #100609; }
+html[data-surface="transparent"] .app[data-style="watcher"], html[data-surface="transparent"] .app[data-style="watcher"].no-glow { background: rgba(0, 0, 0, var(--background-opacity, 1)); }
+.app[data-style="watcher"] .watcher-layer { display: block; }
+.app[data-style="watcher"][data-background-animation="watcher"] .particle { display: none; }
+.app[data-style="watcher"] .animation-options { background: #13070a; }
+.app[data-style="watcher"] .animation-options [role="option"]:hover,
+.app[data-style="watcher"] .animation-options [role="option"]:focus-visible { background: #3a1017; }
+.app[data-style="watcher"] .nav-item.selected { background: color-mix(in srgb, color-mix(in srgb, var(--purple) 15%, #100407) calc(var(--button-opacity, 1) * 100%), transparent); }
+.app[data-style="watcher"] .mode-switch button:not([aria-pressed="true"]) { background: color-mix(in srgb, color-mix(in srgb, var(--mode-color) 18%, #100407) calc(var(--button-opacity, 1) * 100%), transparent); }
+.app[data-style="watcher"] :is(.card, .appearance-group, #routing .catalog-row) { background-color: color-mix(in srgb, #100407 calc(var(--panel-opacity, 1) * 100%), transparent); }
+.app[data-style="watcher"] #routing .task-panel { background: color-mix(in srgb, #100407 calc(var(--panel-opacity, 1) * 100%), transparent); }
+.app[data-style="watcher"] :is(.field, input[type="color"]) { background-color: color-mix(in srgb, #100407 calc(var(--field-opacity, 1) * 100%), transparent); }
+.app[data-style="watcher"] :is(.action:not(.action-start):not(.action-restart):not(.action-accent), .reset-button, .sidebar-toggle, .subtab, .picker-row) { background-color: color-mix(in srgb, #1c080b calc(var(--button-opacity, 1) * 100%), transparent); }
+.app[data-style="watcher"] :is(.subtab.active, .picker-row[aria-pressed="true"]) { background: color-mix(in srgb, color-mix(in srgb, var(--purple) 20%, #100407) calc(var(--button-opacity, 1) * 100%), transparent); }
+.app[data-style="watcher"] #routing .catalog-group h4 { color: #d95b65; }
+.app[data-style="watcher"] #routing .catalog-group:nth-child(n) h4 { border-color: var(--border); }
+.app[data-style="watcher"] .dispatcher-handle::before { background: linear-gradient(90deg, var(--purple), #60121a, transparent); }
+.app[data-style="watcher"] .action-notice { background: #19070b; }
+.app[data-style="watcher"] .nav-item.selected::before { animation: watcher-breathe 4.8s ease-in-out infinite; }
+.app[data-style="watcher"] .nav-item:hover .nav-emoji, .app[data-style="watcher"] .mode-switch button:hover .mode-emoji { animation: watcher-glitch .42s steps(2, end) 1; }
+@keyframes watcher-breathe { 0%, 100% { opacity: .65; box-shadow: 0 0 3px var(--purple); } 50% { opacity: 1; box-shadow: 0 0 calc(10px * var(--element-glow, 1)) var(--purple); } }
+@keyframes watcher-glitch { 0%, 100% { translate: 0; } 25% { translate: -2px 0; filter: drop-shadow(2px 0 #ff3344); } 50% { translate: 2px 0; } 75% { translate: -1px 0; } }
+
+.watcher-scene { position: absolute; left: var(--scene-x, 55%); top: var(--scene-y, 45%); transform: translate(-50%, -50%); opacity: 0; color: #c72232; font-family: Consolas, "Courier New", monospace; white-space: nowrap; }
+.watcher-eyes { position: relative; width: clamp(190px, 26vw, 330px); display: none; }
+.watcher-eyes svg { display: block; width: 100%; height: auto; filter: drop-shadow(0 0 7px #9a0a1a); }
+.watcher-eyes svg circle, .watcher-eyes svg .eye-contour { stroke-width: 1.8; }
+.watcher-eyes svg .eye-fine { stroke-width: 1; opacity: .4; stroke-dasharray: 5 7; }
+.watcher-eyes svg .eye-pupil { stroke-width: 4; }
+.watcher-code { position: absolute; left: 0; right: 0; overflow: hidden; text-align: center; color: #ae1c29; font-size: clamp(8px, .85vw, 11px); letter-spacing: .1em; opacity: .6; }
+.watcher-code-top { top: -12%; }
+.watcher-code-bottom { bottom: -13%; }
+.watcher-message { display: none; color: #cd2938; font-size: clamp(12px, 1.5vw, 18px); letter-spacing: .09em; text-shadow: 1px 0 #3e070c, 0 0 10px #6a1019; }
+.watcher-scene[data-kind="eyes"] .watcher-eyes, .watcher-scene[data-kind="message"] .watcher-message { display: block; }
+.watcher-scene.visible[data-kind="eyes"] { animation: watcher-appear 6.8s ease-in-out both; }
+.watcher-scene.visible[data-kind="eyes"] svg { animation: watcher-open 6.8s ease-in-out both; }
+.watcher-scene.visible[data-kind="message"] { animation: watcher-words 6.8s ease-in-out both; }
+.watcher-scene.visible[data-kind="message"] .watcher-message { animation: watcher-type 3s steps(23, end) both; overflow: hidden; }
+@keyframes watcher-appear { 0%, 100% { opacity: 0; } 18% { opacity: .08; } 35%, 68% { opacity: .6; } 82% { opacity: .2; } }
+@keyframes watcher-open { 0%, 16%, 96%, 100% { transform: scaleY(.02); } 32%, 70% { transform: scaleY(1); } 88% { transform: scaleY(.1); } }
+@keyframes watcher-words { 0%, 100% { opacity: 0; } 20% { opacity: .36; } 39%, 42% { translate: 0; } 40% { translate: 2px 0; text-shadow: -2px 0 #970f1d; } 60% { opacity: .48; } 83% { opacity: .24; } }
+@keyframes watcher-type { from { clip-path: inset(0 100% 0 0); } to { clip-path: inset(0 0 0 0); } }
+.app.no-motion .watcher-scene { display: none; }
+@media (prefers-reduced-motion: reduce) { .watcher-scene { display: none !important; } .app[data-style="watcher"] .nav-item.selected::before, .app[data-style="watcher"] .nav-item:hover .nav-emoji, .app[data-style="watcher"] .mode-switch button:hover .mode-emoji { animation: none !important; } }

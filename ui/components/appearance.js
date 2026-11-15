@@ -3,6 +3,7 @@
 (() => {
   const key = "umbranet-wifi.appearance.v1";
   const defaults = {
+    style: "normal", classicBackup: null,
     transparency: 0, panelTransparency: 100, buttonTransparency: 0, fieldTransparency: 100,
     accent: "#8b6dff", borderColor: "#302b46",
     vpnColor: "#8b6dff", comboColor: "#8b6dff", dpiColor: "#8b6dff",
@@ -12,6 +13,15 @@
     backgroundSpeed: 100, particleCount: 8, motion: true, shake: true, shakeStrength: 35,
     shakeSpeed: 100, uiSpeed: 100, textSize: 100, cornerRadius: 100, density: 100, sidebarWidth: 190,
   };
+  const watcherPreset = {
+    transparency: 0, panelTransparency: 100, buttonTransparency: 0, fieldTransparency: 100,
+    accent: "#dc2636", borderColor: "#6e171f", vpnColor: "#9f1724", comboColor: "#9f1724",
+    dpiColor: "#9f1724", restartColor: "#26080d", startColor: "#a91826", stopColor: "#d22838",
+    glow: false, colorSync: true, neonTop: "#dc2636", neonBottom: "#dc2636",
+    neonBrightness: 52, neonSize: 42, elementGlow: 85, backgroundAnimation: "watcher",
+    backgroundSpeed: 100, particleCount: 8,
+  };
+  const presetProperties = Object.keys(watcherPreset);
   const ranges = {
     "background-transparency": ["transparency", 0, 100, "%"],
     "panel-transparency": ["panelTransparency", 0, 100, "%"],
@@ -46,7 +56,7 @@
     "color-restart": "restartColor", "color-start": "startColor", "color-stop": "stopColor",
   };
   const toggles = { "glow-toggle": "glow", "motion-toggle": "motion", "shake-toggle": "shake" };
-  const animations = ["particles", "waves", "fireflies", "stars", "orbits", "off"];
+  const animations = ["particles", "waves", "fireflies", "stars", "orbits", "watcher", "off"];
   const animationSelect = document.querySelector("#animation-select");
   const animationTrigger = document.querySelector("#background-animation");
   const animationCurrent = document.querySelector("#animation-current");
@@ -54,19 +64,30 @@
   const animationOptions = [...animationList.querySelectorAll("[role=option]")];
   let state = { ...defaults };
 
-  function applyStored(stored) {
+  function applyValues(stored, target) {
     if (!stored || typeof stored !== "object" || Array.isArray(stored)) return false;
     for (const [property, min, max] of Object.values(ranges)) {
       const v = stored[property];
-      if (typeof v === "number" && Number.isFinite(v)) state[property] = Math.round(Math.max(min, Math.min(max, v)));
+      if (typeof v === "number" && Number.isFinite(v)) target[property] = Math.round(Math.max(min, Math.min(max, v)));
     }
     for (const property of Object.values(colorFields)) {
-      if (typeof stored[property] === "string" && /^#[0-9a-f]{6}$/i.test(stored[property])) state[property] = stored[property].toLowerCase();
+      if (typeof stored[property] === "string" && /^#[0-9a-f]{6}$/i.test(stored[property])) target[property] = stored[property].toLowerCase();
     }
     for (const property of [...Object.values(toggles), "colorSync"]) {
-      if (typeof stored[property] === "boolean") state[property] = stored[property];
+      if (typeof stored[property] === "boolean") target[property] = stored[property];
     }
-    if (animations.includes(stored.backgroundAnimation)) state.backgroundAnimation = stored.backgroundAnimation;
+    if (animations.includes(stored.backgroundAnimation)) target.backgroundAnimation = stored.backgroundAnimation;
+    return true;
+  }
+  function applyStored(stored) {
+    if (!applyValues(stored, state)) return false;
+    state.style = stored.style === "watcher" ? "watcher" : "normal";
+    if (stored.classicBackup && typeof stored.classicBackup === "object" && !Array.isArray(stored.classicBackup)) {
+      const backup = { ...defaults };
+      applyValues(stored.classicBackup, backup);
+      state.classicBackup = Object.fromEntries(presetProperties.map(prop => [prop, backup[prop]]));
+    }
+    if (state.style !== "watcher" && state.backgroundAnimation === "watcher") state.backgroundAnimation = defaults.backgroundAnimation;
     return true;
   }
 
@@ -185,10 +206,17 @@
       button.classList.toggle("active", state[prop]);
       button.setAttribute("aria-pressed", String(state[prop]));
     }
+    const watcher = state.style === "watcher";
+    const modified = watcher && presetProperties.some(prop => state[prop] !== watcherPreset[prop]);
+    document.getElementById("preset-current").textContent = watcher ? (modified ? "Свой вариант · 👁 Do you see me?" : "👁 Do you see me?") : "Обычное оформление";
+    for (const option of document.querySelectorAll("[data-preset]")) option.setAttribute("aria-selected", String(option.dataset.preset === state.style && !modified));
+    document.querySelector('[data-animation="watcher"]').hidden = !watcher;
+    app.dataset.style = state.style;
     app.classList.toggle("no-glow", !state.glow);
     app.classList.toggle("no-motion", !state.motion);
     app.classList.toggle("no-shake", !state.shake || state.shakeStrength === 0);
     app.dataset.backgroundAnimation = state.backgroundAnimation;
+    app.dataset.watcherSpeed = String(state.backgroundSpeed);
     const props = {
       "--background-opacity": (100 - state.transparency) / 100,
       "--panel-opacity": (100 - state.panelTransparency) / 100,
@@ -212,7 +240,8 @@
     for (const [name, value] of Object.entries(props)) root.style.setProperty(name, String(value));
     [...document.querySelectorAll(".particle")].forEach((particle, index) => { particle.hidden = index >= state.particleCount; });
     document.getElementById("background-speed").disabled = state.backgroundAnimation === "off";
-    document.getElementById("particle-count").disabled = state.backgroundAnimation === "off";
+    document.getElementById("particle-count").disabled = state.backgroundAnimation === "off" || state.backgroundAnimation === "watcher";
+    window.dispatchEvent(new CustomEvent("umbra-appearance", { detail: { style: state.style, animation: state.backgroundAnimation, motion: state.motion, speed: state.backgroundSpeed } }));
   }
   function update() { render(); save(); }
   for (const [id, [prop]] of Object.entries(ranges)) document.getElementById(id).addEventListener("input", event => { state[prop] = Number(event.target.value); update(); });
@@ -221,6 +250,54 @@
   for (const swatch of document.querySelectorAll("[data-border]")) swatch.addEventListener("click", () => { state.borderColor = swatch.dataset.border; update(); });
   for (const [id, prop] of Object.entries(toggles)) document.getElementById(id).addEventListener("click", () => { state[prop] = !state[prop]; update(); });
   document.getElementById("color-sync").addEventListener("change", event => { state.colorSync = event.target.checked; update(); });
+  const presetSelect = document.getElementById("preset-select");
+  const presetTrigger = document.getElementById("preset-trigger");
+  const presetList = document.getElementById("preset-options");
+  const presetOptions = [...presetList.querySelectorAll("[data-preset]")];
+  function closePresetList(restoreFocus = false) {
+    presetList.hidden = true;
+    presetTrigger.setAttribute("aria-expanded", "false");
+    if (restoreFocus) presetTrigger.focus();
+  }
+  function openPresetList() {
+    presetList.hidden = false;
+    presetTrigger.setAttribute("aria-expanded", "true");
+    presetOptions.find(option => option.dataset.preset === state.style).focus({ preventScroll: true });
+  }
+  presetTrigger.addEventListener("click", () => presetList.hidden ? openPresetList() : closePresetList());
+  presetTrigger.addEventListener("keydown", event => {
+    if (["ArrowDown", "ArrowUp"].includes(event.key)) { event.preventDefault(); openPresetList(); }
+  });
+  presetList.addEventListener("click", event => {
+    const option = event.target.closest("[data-preset]");
+    if (!option) return;
+    if (option.dataset.preset === "watcher") {
+      if (state.style !== "watcher") state.classicBackup = Object.fromEntries(presetProperties.map(prop => [prop, state[prop]]));
+      Object.assign(state, watcherPreset, { style: "watcher" });
+    } else if (state.style === "watcher") {
+      Object.assign(state, state.classicBackup || Object.fromEntries(presetProperties.map(prop => [prop, defaults[prop]])));
+      state.style = "normal";
+      if (state.backgroundAnimation === "watcher") state.backgroundAnimation = defaults.backgroundAnimation;
+      state.classicBackup = null;
+    }
+    update();
+    closePresetList(true);
+  });
+  presetList.addEventListener("keydown", event => {
+    if (event.key === "Escape") { event.preventDefault(); closePresetList(true); return; }
+    const index = presetOptions.indexOf(document.activeElement);
+    let next;
+    if (event.key === "ArrowDown") next = (index + 1) % presetOptions.length;
+    else if (event.key === "ArrowUp") next = (index - 1 + presetOptions.length) % presetOptions.length;
+    else if (event.key === "Home") next = 0;
+    else if (event.key === "End") next = presetOptions.length - 1;
+    else return;
+    event.preventDefault();
+    presetOptions[next].focus();
+  });
+  document.addEventListener("pointerdown", event => { if (!presetSelect.contains(event.target)) closePresetList(); });
+  presetSelect.addEventListener("focusout", event => { if (!presetSelect.contains(event.relatedTarget)) closePresetList(); });
+
   function closeAnimationList(restoreFocus = false) {
     animationList.hidden = true;
     animationTrigger.setAttribute("aria-expanded", "false");
@@ -245,22 +322,23 @@
   });
   animationList.addEventListener("click", event => {
     const option = event.target.closest("[data-animation]");
-    if (!option || !animations.includes(option.dataset.animation)) return;
+    if (!option || option.hidden || !animations.includes(option.dataset.animation)) return;
     state.backgroundAnimation = option.dataset.animation;
     update();
     closeAnimationList(true);
   });
   animationList.addEventListener("keydown", event => {
     if (event.key === "Escape") { event.preventDefault(); closeAnimationList(true); return; }
-    const index = animationOptions.indexOf(document.activeElement);
+    const visibleOptions = animationOptions.filter(option => !option.hidden);
+    const index = visibleOptions.indexOf(document.activeElement);
     let next;
-    if (event.key === "ArrowDown") next = (index + 1) % animationOptions.length;
-    else if (event.key === "ArrowUp") next = (index - 1 + animationOptions.length) % animationOptions.length;
+    if (event.key === "ArrowDown") next = (index + 1) % visibleOptions.length;
+    else if (event.key === "ArrowUp") next = (index - 1 + visibleOptions.length) % visibleOptions.length;
     else if (event.key === "Home") next = 0;
-    else if (event.key === "End") next = animationOptions.length - 1;
+    else if (event.key === "End") next = visibleOptions.length - 1;
     else return;
     event.preventDefault();
-    animationOptions[next].focus();
+    visibleOptions[next].focus();
   });
   document.addEventListener("pointerdown", event => {
     if (!animationSelect.contains(event.target)) closeAnimationList();
