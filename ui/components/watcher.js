@@ -65,15 +65,19 @@
     }
     return boxes;
   }
-  function position(width, height, angle, boxes) {
+  function position(width, height, angle, boxes, region = null) {
     const radians = Math.abs(angle) * Math.PI / 180;
     const w = width * Math.cos(radians) + height * Math.sin(radians);
     const h = width * Math.sin(radians) + height * Math.cos(radians);
     const availableWidth = app.clientWidth, availableHeight = app.clientHeight;
+    const left = Math.max(w / 2, region ? region.column * availableWidth / 4 : 0);
+    const right = Math.min(availableWidth - w / 2, region ? (region.column + 1) * availableWidth / 4 : availableWidth);
+    const top = Math.max(h / 2, region ? region.row * availableHeight / 3 : 0);
+    const bottom = Math.min(availableHeight - h / 2, region ? (region.row + 1) * availableHeight / 3 : availableHeight);
     let best;
     for (let i = 0; i < 28; i++) {
-      const x = w / 2 + Math.random() * Math.max(0, availableWidth - w);
-      const y = h / 2 + Math.random() * Math.max(0, availableHeight - h);
+      const x = left + Math.random() * Math.max(0, right - left);
+      const y = top + Math.random() * Math.max(0, bottom - top);
       const candidate = { left: x - w / 2, right: x + w / 2, top: y - h / 2, bottom: y + h / 2, x, y };
       let overlap = 0;
       for (const rect of boxes) {
@@ -100,14 +104,27 @@
     if (!enabled) return;
     const boxes = cachedObstacles();
     const root = app.getBoundingClientRect();
+    // Balance the background's regions without fixing the precise position.
+    const occupancy = Array(12).fill(0);
     for (const other of field.children) {
       const rect = other.getBoundingClientRect();
       boxes.push({ left: rect.left - root.left, right: rect.right - root.left, top: rect.top - root.top, bottom: rect.bottom - root.top });
+      const x = Number.parseFloat(other.style.getPropertyValue("--eye-x"));
+      const y = Number.parseFloat(other.style.getPropertyValue("--eye-y"));
+      if (Number.isFinite(x) && Number.isFinite(y)) {
+        const column = Math.min(3, Math.max(0, Math.floor(x / 25)));
+        const row = Math.min(2, Math.max(0, Math.floor(y / (100 / 3))));
+        occupancy[row * 4 + column]++;
+      }
     }
+    const least = Math.min(...occupancy);
+    const choices = occupancy.map((value, index) => value === least ? index : -1).filter(index => index >= 0);
+    const chosen = choices[Math.floor(Math.random() * choices.length)];
+    const region = { column: chosen % 4, row: Math.floor(chosen / 4) };
     const eye = template.content.firstElementChild.cloneNode(true);
     const size = 48 + Math.random() * 52;
     const angle = randomAngle();
-    const box = position(size, size * .47, angle, boxes);
+    const box = position(size, size * .47, angle, boxes, region);
     // Each eye holds independently; the brief exit has its own duration.
     const hold = scaled(900 + Math.random() * 3400, 600);
     const glitchDuration = scaled(220 + Math.random() * 160, 150);
@@ -128,7 +145,7 @@
       later(() => {
         eye.remove();
         if (enabled) {
-          const gap = field.childElementCount < 4 ? 0 : scaled(60 + Math.random() * 750, 40);
+          const gap = field.childElementCount < 8 ? 0 : scaled(60 + Math.random() * 750, 40);
           later(showEye, gap);
         }
       }, glitchDuration);
@@ -175,7 +192,7 @@
     stop();
     if (enabled) {
       questionsBeforePhrase = 2;
-      const count = 6 + Math.floor(Math.random() * 3);
+      const count = 12 + Math.floor(Math.random() * 5);
       // Spread the initial arrivals irregularly as well as the later lifetimes.
       const arrivals = Array.from({ length: count }, () => 70 + Math.random() * 1050).sort((a, b) => a - b);
       let lastArrival = 0;
