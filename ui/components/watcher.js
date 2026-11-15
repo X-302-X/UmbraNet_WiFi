@@ -27,6 +27,9 @@
   let questionsBeforePhrase = 2;
   let previousMessage = -1;
   let speed = 100;
+  let obstacleCache = null;
+  let obstacleCacheTime = 0;
+  let lastGlitch = -1;
 
   function later(callback, delay) {
     const timer = setTimeout(() => { timers.delete(timer); callback(); }, delay);
@@ -36,6 +39,7 @@
     for (const timer of timers) clearTimeout(timer);
     timers.clear();
     field.replaceChildren();
+    obstacleCache = null;
     scene.classList.remove("visible");
     scene.dataset.kind = "";
   }
@@ -84,28 +88,44 @@
   function randomAngle() {
     return (Math.random() < .5 ? -1 : 1) * (7 + Math.random() * 28);
   }
-  function showEyes() {
-    if (!enabled) return;
-    field.replaceChildren();
-    const count = 4 + Math.floor(Math.random() * 5);
-    const boxes = obstacles();
-    const duration = scaled(1700 + Math.random() * 450, 1000);
-    for (let i = 0; i < count; i++) {
-      const eye = template.content.firstElementChild.cloneNode(true);
-      const size = 48 + Math.random() * 52;
-      const angle = randomAngle();
-      const box = position(size, size * .47, angle, boxes);
-      boxes.push(box);
-      eye.style.setProperty("--eye-x", `${box.x / app.clientWidth * 100}%`);
-      eye.style.setProperty("--eye-y", `${box.y / app.clientHeight * 100}%`);
-      eye.style.setProperty("--eye-size", `${size.toFixed(1)}px`);
-      eye.style.setProperty("--eye-angle", `${angle.toFixed(1)}deg`);
-      eye.style.setProperty("--eye-duration", `${duration}ms`);
-      field.append(eye);
+  function cachedObstacles() {
+    const now = performance.now();
+    if (!obstacleCache || now - obstacleCacheTime > 700) {
+      obstacleCache = obstacles();
+      obstacleCacheTime = now;
     }
+    return obstacleCache.slice();
+  }
+  function showEye() {
+    if (!enabled) return;
+    const boxes = cachedObstacles();
+    const root = app.getBoundingClientRect();
+    for (const other of field.children) {
+      const rect = other.getBoundingClientRect();
+      boxes.push({ left: rect.left - root.left, right: rect.right - root.left, top: rect.top - root.top, bottom: rect.bottom - root.top });
+    }
+    const eye = template.content.firstElementChild.cloneNode(true);
+    const size = 48 + Math.random() * 52;
+    const angle = randomAngle();
+    const box = position(size, size * .47, angle, boxes);
+    const duration = scaled(1550 + Math.random() * 1500, 1000);
+    // Avoid two successive eyes using the same exit, while retaining randomness.
+    let glitch = Math.floor(Math.random() * 4);
+    if (glitch === lastGlitch) glitch = (glitch + 1 + Math.floor(Math.random() * 3)) % 4;
+    lastGlitch = glitch;
+    eye.dataset.glitch = ["shift", "slices", "echo", "tear"][glitch];
+    eye.style.setProperty("--eye-x", `${box.x / app.clientWidth * 100}%`);
+    eye.style.setProperty("--eye-y", `${box.y / app.clientHeight * 100}%`);
+    eye.style.setProperty("--eye-size", `${size.toFixed(1)}px`);
+    eye.style.setProperty("--eye-angle", `${angle.toFixed(1)}deg`);
+    eye.style.setProperty("--eye-duration", `${duration}ms`);
+    field.append(eye);
     later(() => {
-      field.replaceChildren();
-      if (enabled) later(showEyes, scaled(250 + Math.random() * 550, 150));
+      eye.remove();
+      if (enabled) {
+        const gap = field.childElementCount < 4 ? 0 : scaled(80 + Math.random() * 220, 50);
+        later(showEye, gap);
+      }
     }, duration);
   }
   function showMessage() {
@@ -149,7 +169,12 @@
     stop();
     if (enabled) {
       questionsBeforePhrase = 2;
-      later(showEyes, 350);
+      const count = 6 + Math.floor(Math.random() * 3);
+      let startDelay = 100;
+      for (let i = 0; i < count; i++) {
+        startDelay += 70 + Math.random() * 150;
+        later(showEye, startDelay);
+      }
       later(showMessage, 1200);
     }
   }
