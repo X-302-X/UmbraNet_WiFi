@@ -7,6 +7,20 @@ pub enum Protocol {
     Udp,
 }
 
+/// Только структурные поля: checksum, семантика флагов и TCP options не проверяются.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct TcpHeader<'a> {
+    pub sequence: u32,
+    pub acknowledgment: u32,
+    /// Младшие четыре бита байта с data offset, включая NS/резервные биты.
+    pub reserved_and_ns: u8,
+    pub flags: u8,
+    pub window: u16,
+    pub checksum: u16,
+    pub urgent_pointer: u16,
+    pub options: &'a [u8],
+}
+
 #[derive(Debug, PartialEq, Eq)]
 pub struct Packet<'a> {
     pub source: IpAddr,
@@ -14,6 +28,7 @@ pub struct Packet<'a> {
     pub source_port: u16,
     pub destination_port: u16,
     pub protocol: Protocol,
+    pub tcp: Option<TcpHeader<'a>>,
     pub payload: &'a [u8],
 }
 
@@ -27,6 +42,9 @@ pub enum PacketError {
 
 fn be16(bytes: &[u8]) -> u16 {
     u16::from_be_bytes([bytes[0], bytes[1]])
+}
+fn be32(bytes: &[u8]) -> u32 {
+    u32::from_be_bytes([bytes[0], bytes[1], bytes[2], bytes[3]])
 }
 
 pub fn parse_ip(bytes: &[u8]) -> Result<Packet<'_>, PacketError> {
@@ -104,6 +122,16 @@ pub fn parse_ip(bytes: &[u8]) -> Result<Packet<'_>, PacketError> {
                 source_port: be16(&payload[0..2]),
                 destination_port: be16(&payload[2..4]),
                 protocol: Protocol::Tcp,
+                tcp: Some(TcpHeader {
+                    sequence: be32(&payload[4..8]),
+                    acknowledgment: be32(&payload[8..12]),
+                    reserved_and_ns: payload[12] & 0x0f,
+                    flags: payload[13],
+                    window: be16(&payload[14..16]),
+                    checksum: be16(&payload[16..18]),
+                    urgent_pointer: be16(&payload[18..20]),
+                    options: &payload[20..header_len],
+                }),
                 payload: &payload[header_len..],
             })
         }
@@ -124,6 +152,7 @@ pub fn parse_ip(bytes: &[u8]) -> Result<Packet<'_>, PacketError> {
                 source_port: be16(&payload[0..2]),
                 destination_port: be16(&payload[2..4]),
                 protocol: Protocol::Udp,
+                tcp: None,
                 payload: &payload[8..length],
             })
         }

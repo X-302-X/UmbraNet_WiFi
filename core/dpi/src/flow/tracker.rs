@@ -17,6 +17,10 @@ pub struct FlowKey {
 }
 
 impl FlowKey {
+    pub fn protocol(&self) -> Transport {
+        self.protocol
+    }
+
     /// Адреса передаются уже ориентированными: локальная и удалённая сторона.
     /// Неоднозначные адреса и IPv6 с зоной не применяются для сопоставления.
     pub fn new(local: SocketAddr, remote: SocketAddr, protocol: Transport) -> Option<Self> {
