@@ -1,0 +1,8 @@
+{
+  "version": 1,
+  "id": "discord-voice",
+  "name": "Discord Voice / STUN (UDP fake)",
+  "actions": [
+    { "udp_fake": { "repeats": 8, "fooling": [{ "ttl": 2 }, "bad_sum"] } }
+  ]
+}

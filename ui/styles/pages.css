@@ -208,3 +208,13 @@
 .diagnostic-stats span { color: var(--muted); font-size: calc(10px * var(--font-scale, 1)); }
 .diagnostic-stats strong { font-size: calc(16px * var(--font-scale, 1)); }
 @media (max-width: 920px) { .diagnostic-stats { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+
+/* Библиотека стратегий (страница AI-стратегии) */
+.strategy-list { display: grid; gap: 8px; max-height: 320px; overflow-y: auto; }
+.strategy-row { display: grid; grid-template-columns: 1fr auto; align-items: center; gap: 6px 10px; padding: 10px 12px; border: 1px solid var(--border); border-radius: 10px; background: var(--surface-2, #171325); color: inherit; text-align: left; cursor: pointer; transition: border-color .15s ease, background .15s ease; }
+.strategy-row:hover { border-color: var(--accent, #8b6dff); }
+.strategy-row[aria-selected="true"] { border-color: var(--accent, #8b6dff); box-shadow: inset 0 0 0 1px var(--accent, #8b6dff); }
+.strategy-row strong { font-size: calc(12px * var(--font-scale, 1)); }
+.strategy-id { grid-column: 1; color: var(--muted); font-size: calc(10px * var(--font-scale, 1)); font-family: ui-monospace, monospace; }
+.strategy-badge { grid-column: 2; grid-row: 1 / span 2; padding: 2px 8px; border-radius: 999px; background: var(--accent, #8b6dff); color: #12101c; font-size: calc(10px * var(--font-scale, 1)); font-weight: 700; }
+.strategy-list + .hint.is-error { color: var(--danger, #ed5969); }

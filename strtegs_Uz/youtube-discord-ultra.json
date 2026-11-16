@@ -1,0 +1,18 @@
+{
+  "version": 1,
+  "id": "youtube-discord-ultra",
+  "name": "YouTube + Discord (multisplit + disorder + fake)",
+  "actions": [
+    {
+      "fake": {
+        "repeats": 2,
+        "fooling": [
+          { "auto_ttl": { "delta": 2, "min": 1, "max": 12 } },
+          "bad_sum"
+        ]
+      }
+    },
+    { "disorder": { "positions": ["sld", { "offset": 2 }] } },
+    { "udp_fake": { "repeats": 6, "fooling": [{ "ttl": 3 }, "bad_sum"] } }
+  ]
+}

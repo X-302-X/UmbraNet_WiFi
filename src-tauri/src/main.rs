@@ -22,12 +22,17 @@ fn main() {
     tauri::Builder::default()
         .manage(dpi_bridge::DpiState::new())
         .manage(dpi_bridge::DiagnosticState::new())
+        .manage(dpi_bridge::StrategyState::new())
         .invoke_handler(tauri::generate_handler![
             dpi_bridge::dpi_get,
             dpi_bridge::dpi_apply,
             dpi_bridge::dpi_diagnostic_status,
             dpi_bridge::dpi_diagnostic_start,
             dpi_bridge::dpi_diagnostic_stop,
+            dpi_bridge::dpi_strategy_list,
+            dpi_bridge::dpi_strategy_select,
+            dpi_bridge::dpi_engine_start,
+            dpi_bridge::dpi_engine_stop,
             admin_status,
             running_processes,
             appearance::appearance_load,

@@ -1,0 +1,8 @@
+{
+  "version": 1,
+  "id": "quic-bypass",
+  "name": "QUIC Initial x2 (UDP fake)",
+  "actions": [
+    { "udp_fake": { "repeats": 4, "fooling": [{ "ttl": 4 }, "bad_sum"] } }
+  ]
+}
