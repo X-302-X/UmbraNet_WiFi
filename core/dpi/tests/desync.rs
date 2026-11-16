@@ -80,9 +80,9 @@ fn desync_multisplit_disorder_and_fake_work() {
     for seg in &packets[1..] {
         assert!(verify_tcp(seg).is_ok());
     }
-    let p1 = parse_ip(&packets[1]).unwrap().tcp.unwrap().sequence_number;
-    let p2 = parse_ip(&packets[2]).unwrap().tcp.unwrap().sequence_number;
-    let p3 = parse_ip(&packets[3]).unwrap().tcp.unwrap().sequence_number;
+    let p1 = parse_ip(&packets[1]).unwrap().tcp.unwrap().sequence;
+    let p2 = parse_ip(&packets[2]).unwrap().tcp.unwrap().sequence;
+    let p3 = parse_ip(&packets[3]).unwrap().tcp.unwrap().sequence;
     assert!(p1 > p2 && p2 > p3);
 }
 
@@ -90,9 +90,8 @@ fn desync_multisplit_disorder_and_fake_work() {
 fn fake_md5sig_adds_tcp_option_19() {
     let raw = build_ipv4_tcp_packet(b"hello");
     let fake = build_fake_tcp(&raw, &[Fooling::Md5Sig], &[]).unwrap();
-    let parsed = parse_ip(&fake).unwrap();
-    let tcp = parsed.tcp.unwrap();
-    assert!(tcp.data_offset > 5);
+    let data_offset = fake[32] >> 4;
+    assert!(data_offset > 5);
     assert!(verify_tcp(&fake).is_ok());
 }
 

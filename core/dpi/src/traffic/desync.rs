@@ -85,7 +85,7 @@ impl Default for DesyncPlan {
 /// Эвристика как в zapret: определяем исходный TTL (64 / 128 / 255),
 /// считаем число хопов и вычитаем `delta`, зажимая в `[min_ttl, max_ttl]`.
 pub fn auto_ttl(server_ttl: u8, delta: u8, min_ttl: u8, max_ttl: u8) -> u8 {
-    let initial = if server_ttl <= 64 {
+    let initial: u8 = if server_ttl <= 64 {
         64
     } else if server_ttl <= 128 {
         128
@@ -297,10 +297,14 @@ pub fn build_fake_tcp(
     if packet.protocol != Protocol::Tcp {
         return Err(DesyncError::Unsupported);
     }
-    let tcp = packet.tcp.ok_or(DesyncError::Unsupported)?;
+    let _tcp = packet.tcp.ok_or(DesyncError::Unsupported)?;
     let ipv6 = raw[0] >> 4 == 6;
     let ip_len = if ipv6 { 40 } else { ((raw[0] & 0x0f) as usize) * 4 };
-    let tcp_hdr_len = tcp.data_offset as usize * 4;
+    if raw.len() < ip_len + 20 {
+        return Err(DesyncError::Unsupported);
+    }
+    let data_offset = raw[ip_len + 12] >> 4;
+    let tcp_hdr_len = data_offset as usize * 4;
     let base_hdr_len = ip_len + tcp_hdr_len;
     if raw.len() < base_hdr_len {
         return Err(DesyncError::Unsupported);
@@ -323,7 +327,7 @@ pub fn build_fake_tcp(
         fake.extend_from_slice(&[0u8; 16]);
         fake.push(1);
         fake.push(1);
-        let new_doff = (tcp.data_offset + 5).min(15);
+        let new_doff = (data_offset + 5).min(15);
         fake[ip_len + 12] = (fake[ip_len + 12] & 0x0f) | (new_doff << 4);
     }
     fake.extend_from_slice(payload);
@@ -388,7 +392,10 @@ pub fn apply_desync(raw: &[u8], plan: &DesyncPlan) -> Result<Vec<Vec<u8>>, Desyn
 
     let ipv6 = raw[0] >> 4 == 6;
     let ip_len = if ipv6 { 40 } else { ((raw[0] & 0x0f) as usize) * 4 };
-    let tcp_hdr_len = tcp.data_offset as usize * 4;
+    if raw.len() < ip_len + 20 {
+        return Err(DesyncError::Unsupported);
+    }
+    let tcp_hdr_len = (raw[ip_len + 12] >> 4) as usize * 4;
     let header_len = ip_len + tcp_hdr_len;
     if raw.len() < header_len {
         return Err(DesyncError::Unsupported);
@@ -402,7 +409,7 @@ pub fn apply_desync(raw: &[u8], plan: &DesyncPlan) -> Result<Vec<Vec<u8>>, Desyn
     let cuts = resolve_split_positions(&working_payload, &plan.splits);
     let mut segments = Vec::new();
     let mut start = 0usize;
-    let base_seq = tcp.sequence_number;
+    let base_seq = tcp.sequence;
     let base_ip_id = if ipv6 {
         0
     } else {
