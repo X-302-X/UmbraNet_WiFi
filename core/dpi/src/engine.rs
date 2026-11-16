@@ -10,32 +10,49 @@ use crate::traffic::udp_desync::{apply_udp_desync, is_discord_voice_or_stun, is_
 use std::collections::HashMap;
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
 
-#[cfg(windows)]
+#[cfg(all(windows, target_arch = "x86_64"))]
 use crate::capture::windivert::DivertChannel;
-#[cfg(windows)]
+#[cfg(all(windows, target_arch = "x86_64"))]
 use std::io;
-#[cfg(windows)]
+#[cfg(all(windows, target_arch = "x86_64"))]
+use std::sync::mpsc::Sender;
+#[cfg(all(windows, target_arch = "x86_64"))]
 use std::path::Path;
-#[cfg(windows)]
+#[cfg(all(windows, target_arch = "x86_64"))]
 use std::sync::atomic::{AtomicBool, Ordering};
+
+/// Ограничение кэша TTL, чтобы долгая сессия не росла бесконечно.
+const MAX_TTL_ENTRIES: usize = 4096;
 
 pub struct Engine {
     pub strategy: Strategy,
     pub hostlist: HostList,
     pub ipset: IpSet,
-    pub udp_repeats: u8,
+    udp_repeats: u8,
+    udp_fooling: Vec<Fooling>,
     server_ttl: HashMap<IpAddr, u8>,
 }
 
 impl Engine {
     pub fn new(strategy: Strategy, hostlist: HostList, ipset: IpSet) -> Self {
+        let (udp_repeats, udp_fooling) = strategy.udp_fake().unwrap_or((6, vec![Fooling::Ttl(3)]));
         Self {
             strategy,
             hostlist,
             ipset,
-            udp_repeats: 6,
+            udp_repeats,
+            udp_fooling,
             server_ttl: HashMap::new(),
         }
+    }
+
+    /// Заменяет активную стратегию без пересоздания движка.
+    pub fn set_strategy(&mut self, strategy: Strategy) {
+        let (repeats, fooling) = strategy.udp_fake().unwrap_or((6, vec![Fooling::Ttl(3)]));
+        self.strategy = strategy;
+        self.udp_repeats = repeats;
+        self.udp_fooling = fooling;
+        self.server_ttl.clear();
     }
 
     fn extract_ips(raw: &[u8]) -> Option<(IpAddr, IpAddr, u8)> {
@@ -53,10 +70,21 @@ impl Engine {
                 let mut d = [0u8; 16];
                 s.copy_from_slice(&raw[8..24]);
                 d.copy_from_slice(&raw[24..40]);
-                Some((IpAddr::V6(Ipv6Addr::from(s)), IpAddr::V6(Ipv6Addr::from(d)), raw[7]))
+                Some((
+                    IpAddr::V6(Ipv6Addr::from(s)),
+                    IpAddr::V6(Ipv6Addr::from(d)),
+                    raw[7],
+                ))
             }
             _ => None,
         }
+    }
+
+    fn remember_ttl(&mut self, ip: IpAddr, ttl: u8) {
+        if self.server_ttl.len() >= MAX_TTL_ENTRIES && !self.server_ttl.contains_key(&ip) {
+            self.server_ttl.clear();
+        }
+        self.server_ttl.insert(ip, ttl);
     }
 
     /// Обрабатывает один перехваченный IP-пакет.
@@ -68,7 +96,7 @@ impl Engine {
 
         // На входящих пакетах запоминаем TTL сервера для AutoTtl
         if !outbound {
-            self.server_ttl.insert(src_ip, ttl);
+            self.remember_ttl(src_ip, ttl);
             return vec![raw.to_vec()];
         }
 
@@ -102,45 +130,80 @@ impl Engine {
 
                 let sttl = self.server_ttl.get(&dst_ip).copied();
                 let plan = self.strategy.to_desync_plan(sttl);
-                apply_desync(raw, &plan).unwrap_or_else(|_| vec![raw.to_vec()])
+                match apply_desync(raw, &plan) {
+                    Ok(packets) => packets,
+                    // Известные ограничения (нет payload, слишком много сегментов) — не ошибка.
+                    Err(_) => vec![raw.to_vec()],
+                }
             }
             Protocol::Udp => {
                 let ip_matched = self.ipset.is_empty() || self.ipset.contains(dst_ip);
                 if !ip_matched {
                     return vec![raw.to_vec()];
                 }
+                if self.udp_fooling.is_empty() {
+                    return vec![raw.to_vec()];
+                }
                 if is_quic_initial(parsed.payload) || is_discord_voice_or_stun(parsed.payload) {
-                    let fooling = [Fooling::Ttl(3), Fooling::BadSum];
-                    apply_udp_desync(raw, self.udp_repeats, &fooling, &[])
-                        .unwrap_or_else(|_| vec![raw.to_vec()])
+                    match apply_udp_desync(raw, self.udp_repeats, &self.udp_fooling, &[]) {
+                        Ok(packets) => packets,
+                        Err(_) => vec![raw.to_vec()],
+                    }
                 } else {
                     vec![raw.to_vec()]
                 }
             }
-            _ => vec![raw.to_vec()],
         }
     }
 
     /// Запускает блокирующий цикл перехвата и модификации пакетов через WinDivert.
-    #[cfg(windows)]
+    #[cfg(all(windows, target_arch = "x86_64"))]
     pub fn run_divert(
         &mut self,
         dll_path: &Path,
         filter: &str,
         stop_flag: &AtomicBool,
+        events: Option<Sender<String>>,
     ) -> io::Result<()> {
         let channel = DivertChannel::open(dll_path, filter)?;
+        self.run_channel_with_events(&channel, stop_flag, events)
+    }
+
+    /// Цикл с передачей ошибок наружу (для интерфейса).
+    #[cfg(all(windows, target_arch = "x86_64"))]
+    pub fn run_channel_with_events(
+        &mut self,
+        channel: &crate::capture::windivert::DivertChannel,
+        stop_flag: &AtomicBool,
+        events: Option<Sender<String>>,
+    ) -> io::Result<()> {
+        let result = self.run_channel(channel, stop_flag);
+        if let (Err(error), Some(tx)) = (&result, events) {
+            let _ = tx.send(format!("Движок остановлен: {error}"));
+        }
+        result
+    }
+
+    /// Цикл обработки по уже открытому каналу (нужен для внешней остановки).
+    #[cfg(all(windows, target_arch = "x86_64"))]
+    pub fn run_channel(
+        &mut self,
+        channel: &crate::capture::windivert::DivertChannel,
+        stop_flag: &AtomicBool,
+    ) -> io::Result<()> {
         while !stop_flag.load(Ordering::Relaxed) {
             let (raw, addr) = match channel.receive() {
                 Ok(res) => res,
                 Err(_) if stop_flag.load(Ordering::Relaxed) => break,
                 Err(e) => return Err(e),
             };
-            // В WinDivert RawAddress.outbound == 1 (или бит 0) означает исходящий пакет
-            let outbound = (addr.outbound & 1) != 0;
+            let outbound = addr.outbound();
             let out_packets = self.process_packet(&raw, outbound);
             for pkt in out_packets {
-                let _ = channel.send(&pkt, &addr);
+                // Копии фейков и сегментов должны уходить в том же направлении.
+                let mut out_addr = addr;
+                out_addr.set_outbound(outbound);
+                let _ = channel.send(&pkt, &out_addr);
             }
         }
         Ok(())

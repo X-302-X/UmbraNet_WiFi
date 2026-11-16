@@ -43,10 +43,20 @@ pub enum Action {
     TlsRecordSplit {
         offset: usize,
     },
+    UdpFake {
+        #[serde(default = "default_udp_repeats")]
+        repeats: u8,
+        #[serde(default)]
+        fooling: Vec<StrategyFooling>,
+    },
 }
 
 fn default_repeats() -> u8 {
     1
+}
+
+fn default_udp_repeats() -> u8 {
+    6
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -122,9 +132,32 @@ impl Strategy {
                 Action::TlsRecordSplit { offset } => {
                     plan.tls_record_split = Some(*offset);
                 }
+                Action::UdpFake { .. } => {}
             }
         }
         plan
+    }
+
+    /// Параметры fake-пакетов для UDP (QUIC / Discord Voice).
+    /// Возвращает `None`, если стратегия не содержит `udp_fake`.
+    pub fn udp_fake(&self) -> Option<(u8, Vec<Fooling>)> {
+        let mut result = None;
+        for action in &self.actions {
+            if let Action::UdpFake { repeats, fooling } = action {
+                let mapped = fooling
+                    .iter()
+                    .filter_map(|f| match *f {
+                        StrategyFooling::Ttl(t) => Some(Fooling::Ttl(t)),
+                        StrategyFooling::AutoTtl { min, .. } => Some(Fooling::Ttl(min.max(1))),
+                        StrategyFooling::BadSum => Some(Fooling::BadSum),
+                        // BadSeq/Md5Sig имеют смысл только для TCP.
+                        StrategyFooling::BadSeq(_) | StrategyFooling::Md5Sig => None,
+                    })
+                    .collect();
+                result = Some(((*repeats).max(1), mapped));
+            }
+        }
+        result
     }
 }
 

@@ -16,6 +16,53 @@ const MAX_PACKET: usize = 40 + 65_535;
 const LOAD_LIBRARY_SEARCH_DLL_LOAD_DIR: u32 = 0x0000_0100;
 const LOAD_LIBRARY_SEARCH_SYSTEM32: u32 = 0x0000_0800;
 
+/// Структура WINDIVERT_ADDRESS из windivert.h (64 байта, x64).
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub struct WinDivertAddress {
+    pub timestamp: i64,
+    pub layer: u8,
+    pub event: u8,
+    raw_flags: u8,
+    reserved2: u8,
+    reserved3: u32,
+    pub reserved: [u32; 6],
+}
+
+impl Default for WinDivertAddress {
+    fn default() -> Self {
+        Self {
+            timestamp: 0,
+            layer: 0,
+            event: 0,
+            raw_flags: 0,
+            reserved2: 0,
+            reserved3: 0,
+            reserved: [0; 6],
+        }
+    }
+}
+
+impl WinDivertAddress {
+    /// Бит 0 байта flags — направление пакета (1 = outbound).
+    pub fn outbound(&self) -> bool {
+        self.raw_flags & 1 != 0
+    }
+    pub fn loopback(&self) -> bool {
+        self.raw_flags & 2 != 0
+    }
+    pub fn impostor(&self) -> bool {
+        self.raw_flags & 4 != 0
+    }
+    pub fn set_outbound(&mut self, value: bool) {
+        if value {
+            self.raw_flags |= 1;
+        } else {
+            self.raw_flags &= !1;
+        }
+    }
+}
+
 type Handle = *mut c_void;
 type OpenFn = unsafe extern "C" fn(*const c_char, i32, i16, u64) -> Handle;
 type RecvFn = unsafe extern "C" fn(Handle, *mut c_void, u32, *mut u32, *mut c_void) -> i32;
@@ -249,17 +296,17 @@ impl DivertChannel {
         })
     }
 
-    pub fn receive(&self) -> io::Result<(Vec<u8>, RawAddress)> {
+    pub fn receive(&self) -> io::Result<(Vec<u8>, WinDivertAddress)> {
         let mut packet = vec![0u8; MAX_PACKET];
         let mut length = 0u32;
-        let mut addr = RawAddress::default();
+        let mut addr = WinDivertAddress::default();
         let ok = unsafe {
             (self.recv)(
                 self.handle,
                 packet.as_mut_ptr().cast(),
                 MAX_PACKET as u32,
                 &mut length,
-                (&mut addr as *mut RawAddress).cast(),
+                (&mut addr as *mut WinDivertAddress).cast(),
             )
         };
         if ok == 0 {
@@ -275,7 +322,7 @@ impl DivertChannel {
         Ok((packet, addr))
     }
 
-    pub fn send(&self, packet: &[u8], addr: &RawAddress) -> io::Result<u32> {
+    pub fn send(&self, packet: &[u8], addr: &WinDivertAddress) -> io::Result<u32> {
         let mut sent = 0u32;
         let ok = unsafe {
             (self.send)(
@@ -283,7 +330,7 @@ impl DivertChannel {
                 packet.as_ptr().cast(),
                 packet.len() as u32,
                 &mut sent,
-                (addr as *const RawAddress).cast(),
+                (addr as *const WinDivertAddress).cast(),
             )
         };
         if ok == 0 {

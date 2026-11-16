@@ -19,4 +19,8 @@ impl AppPaths {
     pub fn driver_dll(&self) -> PathBuf {
         self.dpi_dir().join("driver").join("WinDivert.dll")
     }
+    /// Папка JSON-пресетов стратегий.
+    pub fn strategy_dir(&self) -> PathBuf {
+        self.root.join("strtegs_Uz")
+    }
 }
