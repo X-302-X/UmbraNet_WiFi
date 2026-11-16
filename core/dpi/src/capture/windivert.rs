@@ -19,6 +19,7 @@ const LOAD_LIBRARY_SEARCH_SYSTEM32: u32 = 0x0000_0800;
 type Handle = *mut c_void;
 type OpenFn = unsafe extern "C" fn(*const c_char, i32, i16, u64) -> Handle;
 type RecvFn = unsafe extern "C" fn(Handle, *mut c_void, u32, *mut u32, *mut c_void) -> i32;
+type SendFn = unsafe extern "C" fn(Handle, *const c_void, u32, *mut u32, *const c_void) -> i32;
 type ShutdownFn = unsafe extern "C" fn(Handle, i32) -> i32;
 type CloseFn = unsafe extern "C" fn(Handle) -> i32;
 
@@ -198,6 +199,112 @@ impl FlowListener {
     }
     pub fn shutdown(&self) -> io::Result<()> {
         self.inner.shutdown()
+    }
+}
+
+/// Активный канал WinDivert (без SNIFF_RECV_ONLY): перехватывает пакеты,
+/// позволяя модифицировать их и отправлять через `WinDivertSend`.
+pub struct DivertChannel {
+    handle: Handle,
+    recv: RecvFn,
+    send: SendFn,
+    shutdown_fn: ShutdownFn,
+    close: CloseFn,
+    _library: Library,
+}
+
+unsafe impl Send for DivertChannel {}
+unsafe impl Sync for DivertChannel {}
+
+impl DivertChannel {
+    pub fn open(dll_path: &Path, filter_text: &str) -> io::Result<Self> {
+        let filter = CString::new(filter_text)
+            .map_err(|_| io::Error::new(io::ErrorKind::InvalidInput, "Некорректный фильтр"))?;
+        let library = Library::load(dll_path)?;
+        let open: OpenFn = unsafe { std::mem::transmute(library.symbol(b"WinDivertOpen\0")?) };
+        let recv: RecvFn = unsafe { std::mem::transmute(library.symbol(b"WinDivertRecv\0")?) };
+        let send: SendFn = unsafe { std::mem::transmute(library.symbol(b"WinDivertSend\0")?) };
+        let shutdown_fn: ShutdownFn =
+            unsafe { std::mem::transmute(library.symbol(b"WinDivertShutdown\0")?) };
+        let close: CloseFn = unsafe { std::mem::transmute(library.symbol(b"WinDivertClose\0")?) };
+
+        // flags = 0 -> активный перехват (пакеты изымаются из стека до WinDivertSend)
+        let handle = unsafe { open(filter.as_ptr(), NETWORK_LAYER, 0, 0) };
+        if handle as isize == -1 {
+            return Err(io::Error::last_os_error());
+        }
+        if handle.is_null() {
+            return Err(io::Error::new(
+                io::ErrorKind::Other,
+                "Не удалось открыть активный WinDivert",
+            ));
+        }
+        Ok(Self {
+            handle,
+            recv,
+            send,
+            shutdown_fn,
+            close,
+            _library: library,
+        })
+    }
+
+    pub fn receive(&self) -> io::Result<(Vec<u8>, RawAddress)> {
+        let mut packet = vec![0u8; MAX_PACKET];
+        let mut length = 0u32;
+        let mut addr = RawAddress::default();
+        let ok = unsafe {
+            (self.recv)(
+                self.handle,
+                packet.as_mut_ptr().cast(),
+                MAX_PACKET as u32,
+                &mut length,
+                (&mut addr as *mut RawAddress).cast(),
+            )
+        };
+        if ok == 0 {
+            return Err(io::Error::last_os_error());
+        }
+        if length as usize > packet.len() {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                "Некорректная длина пакета",
+            ));
+        }
+        packet.truncate(length as usize);
+        Ok((packet, addr))
+    }
+
+    pub fn send(&self, packet: &[u8], addr: &RawAddress) -> io::Result<u32> {
+        let mut sent = 0u32;
+        let ok = unsafe {
+            (self.send)(
+                self.handle,
+                packet.as_ptr().cast(),
+                packet.len() as u32,
+                &mut sent,
+                (addr as *const RawAddress).cast(),
+            )
+        };
+        if ok == 0 {
+            return Err(io::Error::last_os_error());
+        }
+        Ok(sent)
+    }
+
+    pub fn shutdown(&self) -> io::Result<()> {
+        if unsafe { (self.shutdown_fn)(self.handle, SHUTDOWN_RECV) } == 0 {
+            return Err(io::Error::last_os_error());
+        }
+        Ok(())
+    }
+}
+
+impl Drop for DivertChannel {
+    fn drop(&mut self) {
+        unsafe {
+            (self.close)(self.handle);
+        }
     }
 }
 
