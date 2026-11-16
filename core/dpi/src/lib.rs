@@ -3,6 +3,7 @@ pub mod capture;
 pub mod catalog;
 pub mod diagnostics;
 pub mod domain;
+pub mod engine;
 pub mod flow;
 pub mod layout;
 pub mod selection;
