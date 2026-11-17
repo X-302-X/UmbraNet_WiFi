@@ -7,6 +7,9 @@
   const startButton = document.querySelector("#engine-start");
   const stopButton = document.querySelector("#engine-stop");
   const stateLabel = document.querySelector("#engine-state");
+  const autoList = document.querySelector("#auto-list");
+  const autoCount = document.querySelector("#auto-count");
+  const autoClear = document.querySelector("#auto-clear");
   const invoke = window.__TAURI_INTERNALS__?.invoke;
 
   if (!list || typeof invoke !== "function") return;
@@ -65,6 +68,25 @@
     }
 
     count.textContent = view?.selected ? `Выбрано: ${view.selected}` : "Выбрано: —";
+
+    const auto = view?.auto_domains || [];
+    autoCount.textContent = `${auto.length} доменов`;
+    autoClear.disabled = busy || auto.length === 0;
+    autoList.replaceChildren();
+    if (!auto.length) {
+      const empty = document.createElement("div");
+      empty.className = "empty-box";
+      empty.textContent = "Пока пусто";
+      autoList.append(empty);
+    }
+    for (const domain of auto) {
+      const row = document.createElement("div");
+      row.className = "strategy-row auto-row";
+      const name = document.createElement("strong");
+      name.textContent = domain;
+      row.append(name);
+      autoList.append(row);
+    }
     const running = Boolean(view?.running);
     startButton.disabled = busy || running || !view?.selected;
     stopButton.disabled = busy || !running;
@@ -134,6 +156,21 @@
       schedulePoll();
     }
   }
+
+  autoClear.addEventListener("click", async () => {
+    if (busy) return;
+    busy = true;
+    render();
+    try {
+      view = parse(await invoke("dpi_autohostlist_clear"));
+      status("");
+    } catch (error) {
+      status(String(error), true);
+    } finally {
+      busy = false;
+      render();
+    }
+  });
 
   startButton.addEventListener("click", () => toggle(true));
   stopButton.addEventListener("click", () => toggle(false));
