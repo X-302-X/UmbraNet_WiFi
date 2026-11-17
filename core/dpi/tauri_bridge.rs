@@ -112,6 +112,7 @@ pub async fn dpi_diagnostic_stop(
 
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
+use umbranet_dpi::autohostlist::AutoHostList;
 use umbranet_dpi::engine::Engine;
 use umbranet_dpi::profiles::{Profiles, Summary};
 
@@ -128,6 +129,7 @@ pub struct StrategyView {
     pub running: bool,
     pub running_id: Option<String>,
     pub last_error: Option<String>,
+    pub auto_domains: Vec<String>,
 }
 
 impl StrategyView {
@@ -145,13 +147,15 @@ impl StrategyView {
                 )
             })
             .collect();
+        let auto: Vec<String> = self.auto_domains.iter().map(|d| quote(d)).collect();
         format!(
-            "{{\"strategies\":[{}],\"selected\":{},\"running\":{},\"running_id\":{},\"last_error\":{}}}",
+            "{{\"strategies\":[{}],\"selected\":{},\"running\":{},\"running_id\":{},\"last_error\":{},\"auto_domains\":[{}]}}",
             strategies.join(","),
             opt(&self.selected),
             self.running,
             opt(&self.running_id),
-            opt(&self.last_error)
+            opt(&self.last_error),
+            auto.join(",")
         )
     }
 }
@@ -179,6 +183,7 @@ struct StrategyInner {
     events: Option<std::sync::mpsc::Receiver<String>>,
     running_id: Option<String>,
     last_error: Option<String>,
+    auto_domains: Vec<String>,
 }
 
 impl StrategyState {
@@ -199,6 +204,7 @@ impl StrategyState {
                 events: None,
                 running_id: None,
                 last_error: None,
+                auto_domains: Vec::new(),
             }),
         }
     }
@@ -237,6 +243,7 @@ fn build_view(inner: &mut StrategyInner) -> StrategyView {
         running: inner.running_id.is_some(),
         running_id: inner.running_id.clone(),
         last_error: profiles_error.or_else(|| inner.last_error.clone()),
+        auto_domains: inner.auto_domains.clone(),
     }
 }
 
@@ -319,15 +326,23 @@ pub async fn dpi_engine_start(state: State<'_, StrategyState>) -> Result<String,
             }
         };
 
+        // Домены, которые уже ловили RST, сразу попадают в обход.
+        let auto = AutoHostList::load(&umbranet_dpi::layout::AppPaths::new(&app_root()?).strategy_dir());
+        {
+            let mut inner = state.try_lock()?;
+            inner.auto_domains = auto.domains();
+        }
+
         let stop = Arc::new(AtomicBool::new(false));
         let thread_stop = Arc::clone(&stop);
         let thread_channel = Arc::clone(&channel);
         let (events_tx, events_rx) = std::sync::mpsc::channel::<String>();
         let handle = std::thread::spawn(move || {
-            let mut engine = Engine::new(
+            let mut engine = Engine::with_autohostlist(
                 strategy,
                 umbranet_dpi::traffic::filter::HostList::default(),
                 umbranet_dpi::traffic::filter::IpSet::default(),
+                Some(auto),
             );
             let _ = engine.run_channel_with_events(&thread_channel, &thread_stop, Some(events_tx));
         });
@@ -352,5 +367,21 @@ pub async fn dpi_engine_start(state: State<'_, StrategyState>) -> Result<String,
 pub fn dpi_engine_stop(state: State<'_, StrategyState>) -> Result<String, String> {
     let mut inner = state.try_lock()?;
     stop_worker(&mut inner);
+    // Движок уже остановлен, поэтому перечитываем файл целиком.
+    if let Ok(root) = app_root() {
+        let auto = AutoHostList::load(&umbranet_dpi::layout::AppPaths::new(&root).strategy_dir());
+        inner.auto_domains = auto.domains();
+    }
+    Ok(build_view(&mut inner).to_json())
+}
+
+/// Очищает автоматически собранный список доменов.
+#[tauri::command]
+pub fn dpi_autohostlist_clear(state: State<'_, StrategyState>) -> Result<String, String> {
+    let mut inner = state.try_lock()?;
+    let dir = umbranet_dpi::layout::AppPaths::new(&app_root()?).strategy_dir();
+    let mut auto = AutoHostList::load(&dir);
+    auto.clear()?;
+    inner.auto_domains = Vec::new();
     Ok(build_view(&mut inner).to_json())
 }

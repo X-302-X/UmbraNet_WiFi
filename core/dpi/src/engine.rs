@@ -2,6 +2,7 @@
 //! связывает DivertChannel, HostList/IpSet, кэш server_ttl для AutoTtl,
 //! TCP/TLS desync и UDP/QUIC/Discord desync.
 
+use crate::autohostlist::{failure_kind, AutoHostList};
 use crate::strategy::Strategy;
 use crate::traffic::desync::{apply_desync, find_host_range, Fooling};
 use crate::traffic::filter::{HostList, IpSet};
@@ -24,26 +25,62 @@ use std::sync::atomic::{AtomicBool, Ordering};
 /// Ограничение кэша TTL, чтобы долгая сессия не росла бесконечно.
 const MAX_TTL_ENTRIES: usize = 4096;
 
+/// Сколько живёт запись «этот домен ушёл на этот адрес» для autohostlist.
+const PENDING_TTL_SECS: u64 = 30;
+
 pub struct Engine {
     pub strategy: Strategy,
     pub hostlist: HostList,
     pub ipset: IpSet,
+    pub auto: Option<AutoHostList>,
     udp_repeats: u8,
     udp_fooling: Vec<Fooling>,
     server_ttl: HashMap<IpAddr, u8>,
+    /// (адрес назначения, порт) -> (домен, время) для реакции на RST.
+    pending: HashMap<(IpAddr, u16), (String, std::time::Instant)>,
 }
 
 impl Engine {
     pub fn new(strategy: Strategy, hostlist: HostList, ipset: IpSet) -> Self {
+        Self::with_autohostlist(strategy, hostlist, ipset, None)
+    }
+
+    pub fn with_autohostlist(
+        strategy: Strategy,
+        hostlist: HostList,
+        ipset: IpSet,
+        auto: Option<AutoHostList>,
+    ) -> Self {
         let (udp_repeats, udp_fooling) = strategy.udp_fake().unwrap_or((6, vec![Fooling::Ttl(3)]));
         Self {
             strategy,
             hostlist,
             ipset,
+            auto,
             udp_repeats,
             udp_fooling,
             server_ttl: HashMap::new(),
+            pending: HashMap::new(),
         }
+    }
+
+    /// Домены, автоматически добавленные из-за сбоев.
+    pub fn auto_domains(&self) -> Vec<String> {
+        self.auto.as_ref().map(|a| a.domains()).unwrap_or_default()
+    }
+
+    pub fn clear_auto(&mut self) -> Result<(), String> {
+        match &mut self.auto {
+            Some(auto) => auto.clear(),
+            None => Ok(()),
+        }
+    }
+
+    fn host_allowed(&self, host: &str) -> bool {
+        if self.hostlist.matches(host) {
+            return true;
+        }
+        self.auto.as_ref().map(|a| a.contains(host)).unwrap_or(false)
     }
 
     /// Заменяет активную стратегию без пересоздания движка.
@@ -95,8 +132,22 @@ impl Engine {
         };
 
         // На входящих пакетах запоминаем TTL сервера для AutoTtl
+        // и ловим RST, чтобы пополнить autohostlist.
         if !outbound {
             self.remember_ttl(src_ip, ttl);
+            if let Ok(parsed) = parse_ip(raw) {
+                if failure_kind(raw).is_some() {
+                    // Ключ — адрес сервера и его порт (у входящего source_port = 443).
+                    let key = (src_ip, parsed.source_port);
+                    if let Some((host, at)) = self.pending.get(&key) {
+                        if at.elapsed().as_secs() <= PENDING_TTL_SECS {
+                            if let Some(auto) = &mut self.auto {
+                                auto.record(host);
+                            }
+                        }
+                    }
+                }
+            }
             return vec![raw.to_vec()];
         }
 
@@ -114,17 +165,30 @@ impl Engine {
 
         match parsed.protocol {
             Protocol::Tcp => {
-                let host_matched = if self.hostlist.is_empty() {
-                    true
-                } else if let Some((s, e)) = find_host_range(parsed.payload) {
-                    let host = String::from_utf8_lossy(&parsed.payload[s..e]);
-                    self.hostlist.matches(&host)
-                } else {
-                    false
-                };
+                let host = find_host_range(parsed.payload)
+                    .map(|(s, e)| String::from_utf8_lossy(&parsed.payload[s..e]).to_ascii_lowercase());
+                if let Some(host) = &host {
+                    if host.contains('.') {
+                        self.pending
+                            .insert((dst_ip, parsed.destination_port), (host.clone(), std::time::Instant::now()));
+                    }
+                }
 
-                let ip_matched = self.ipset.is_empty() || self.ipset.contains(dst_ip);
-                if !host_matched && !ip_matched {
+                // Фильтры включаются только когда что-то задано:
+                // иначе обход применялся бы ко всему TCP.
+                let domain_filter = !self.hostlist.is_empty() || self.auto.is_some();
+                let host_matched = domain_filter
+                    && host
+                        .as_deref()
+                        .map(|h| self.host_allowed(h))
+                        .unwrap_or(false);
+                let ip_matched = !self.ipset.is_empty() && self.ipset.contains(dst_ip);
+                let allowed = if !domain_filter && self.ipset.is_empty() {
+                    true
+                } else {
+                    host_matched || ip_matched
+                };
+                if !allowed {
                     return vec![raw.to_vec()];
                 }
 

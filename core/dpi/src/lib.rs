@@ -1,4 +1,5 @@
 //! Модель целей DPI и активный движок обхода.
+pub mod autohostlist;
 pub mod capture;
 pub mod catalog;
 pub mod diagnostics;

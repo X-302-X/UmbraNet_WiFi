@@ -33,6 +33,7 @@ fn main() {
             dpi_bridge::dpi_strategy_select,
             dpi_bridge::dpi_engine_start,
             dpi_bridge::dpi_engine_stop,
+            dpi_bridge::dpi_autohostlist_clear,
             admin_status,
             running_processes,
             appearance::appearance_load,
