@@ -14,6 +14,16 @@
   let view = null;
   let busy = false;
 
+  // Команды моста возвращают JSON-строку (без serde-derive в src-tauri).
+  function parse(payload) {
+    if (typeof payload !== "string") return payload || null;
+    try {
+      return JSON.parse(payload);
+    } catch {
+      return null;
+    }
+  }
+
   function status(text, isError = false) {
     message.textContent = text;
     message.classList.toggle("is-error", isError);
@@ -71,7 +81,7 @@
     if (timer || !view?.running) return;
     timer = setInterval(async () => {
       try {
-        view = await invoke("dpi_strategy_list");
+        view = parse(await invoke("dpi_strategy_list"));
         if (view?.last_error) status(view.last_error, true);
         render();
       } finally {
@@ -85,7 +95,7 @@
 
   async function refresh() {
     try {
-      view = await invoke("dpi_strategy_list");
+      view = parse(await invoke("dpi_strategy_list"));
       render();
       schedulePoll();
     } catch (error) {
@@ -98,7 +108,7 @@
     busy = true;
     startButton.disabled = true;
     try {
-      view = await invoke("dpi_strategy_select", { id });
+      view = parse(await invoke("dpi_strategy_select", { id }));
       status("");
     } catch (error) {
       status(String(error), true);
@@ -114,7 +124,7 @@
     status("");
     render();
     try {
-      view = await invoke(start ? "dpi_engine_start" : "dpi_engine_stop");
+      view = parse(await invoke(start ? "dpi_engine_start" : "dpi_engine_stop"));
       if (view?.last_error) status(view.last_error, true);
     } catch (error) {
       status(String(error), true);

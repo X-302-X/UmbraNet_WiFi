@@ -110,7 +110,6 @@ pub async fn dpi_diagnostic_stop(
 
 // ---- Пресеты стратегий и управление активным движком ----
 
-use serde::Serialize;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use umbranet_dpi::engine::Engine;
@@ -123,13 +122,49 @@ type SharedChannel = Arc<umbranet_dpi::capture::windivert::DivertChannel>;
 #[cfg(not(all(windows, target_arch = "x86_64")))]
 type SharedChannel = ();
 
-#[derive(Debug, Serialize)]
 pub struct StrategyView {
     pub strategies: Vec<Summary>,
     pub selected: Option<String>,
     pub running: bool,
     pub running_id: Option<String>,
     pub last_error: Option<String>,
+}
+
+impl StrategyView {
+    /// Без derive-зависимостей: мост использует только serde_json, который уже есть.
+    pub fn to_json(&self) -> String {
+        let strategies: Vec<String> = self
+            .strategies
+            .iter()
+            .map(|s| {
+                format!(
+                    "{{\"id\":{},\"name\":{},\"file\":{}}}",
+                    quote(&s.id),
+                    quote(&s.name),
+                    quote(&s.file)
+                )
+            })
+            .collect();
+        format!(
+            "{{\"strategies\":[{}],\"selected\":{},\"running\":{},\"running_id\":{},\"last_error\":{}}}",
+            strategies.join(","),
+            opt(&self.selected),
+            self.running,
+            opt(&self.running_id),
+            opt(&self.last_error)
+        )
+    }
+}
+
+fn quote(value: &str) -> String {
+    serde_json::Value::String(value.to_string()).to_string()
+}
+
+fn opt(value: &Option<String>) -> String {
+    match value {
+        Some(text) => quote(text),
+        None => "null".to_string(),
+    }
 }
 
 pub struct StrategyState {
@@ -222,17 +257,17 @@ fn stop_worker(inner: &mut StrategyInner) {
 }
 
 #[tauri::command]
-pub fn dpi_strategy_list(state: State<'_, StrategyState>) -> Result<StrategyView, String> {
+pub fn dpi_strategy_list(state: State<'_, StrategyState>) -> Result<String, String> {
     let mut inner = state.try_lock()?;
     drain_events(&mut inner);
-    Ok(build_view(&mut inner))
+    Ok(build_view(&mut inner).to_json())
 }
 
 #[tauri::command]
 pub fn dpi_strategy_select(
     state: State<'_, StrategyState>,
     id: String,
-) -> Result<StrategyView, String> {
+) -> Result<String, String> {
     let mut inner = state.try_lock()?;
     if inner.running_id.is_some() {
         return Err("Сначала остановите обход, затем меняйте стратегию".into());
@@ -245,19 +280,19 @@ pub fn dpi_strategy_select(
         profiles.select(&id)?;
     }
     inner.last_error = None;
-    Ok(build_view(&mut inner))
+    Ok(build_view(&mut inner).to_json())
 }
 
 /// Включает активный движок на выбранной стратегии.
 /// Требует прав администратора и наличия WinDivert.dll рядом с драйвером.
 #[tauri::command]
-pub async fn dpi_engine_start(state: State<'_, StrategyState>) -> Result<StrategyView, String> {
+pub async fn dpi_engine_start(state: State<'_, StrategyState>) -> Result<String, String> {
     #[cfg(all(windows, target_arch = "x86_64"))]
     {
         let (id, strategy, dll) = {
             let mut inner = state.try_lock()?;
             if inner.running_id.is_some() {
-                return Ok(build_view(&mut inner));
+                return Ok(build_view(&mut inner).to_json());
             }
             let profiles = match &inner.profiles {
                 Ok(p) => p,
@@ -280,7 +315,7 @@ pub async fn dpi_engine_start(state: State<'_, StrategyState>) -> Result<Strateg
             Err(e) => {
                 let mut inner = state.try_lock()?;
                 inner.last_error = Some(format!("Не удалось открыть WinDivert: {e}"));
-                return Ok(build_view(&mut inner));
+                return Ok(build_view(&mut inner).to_json());
             }
         };
 
@@ -304,7 +339,7 @@ pub async fn dpi_engine_start(state: State<'_, StrategyState>) -> Result<Strateg
         inner.events = Some(events_rx);
         inner.running_id = Some(id);
         inner.last_error = None;
-        Ok(build_view(&mut inner))
+        Ok(build_view(&mut inner).to_json())
     }
     #[cfg(not(all(windows, target_arch = "x86_64")))]
     {
@@ -314,8 +349,8 @@ pub async fn dpi_engine_start(state: State<'_, StrategyState>) -> Result<Strateg
 }
 
 #[tauri::command]
-pub fn dpi_engine_stop(state: State<'_, StrategyState>) -> Result<StrategyView, String> {
+pub fn dpi_engine_stop(state: State<'_, StrategyState>) -> Result<String, String> {
     let mut inner = state.try_lock()?;
     stop_worker(&mut inner);
-    Ok(build_view(&mut inner))
+    Ok(build_view(&mut inner).to_json())
 }
