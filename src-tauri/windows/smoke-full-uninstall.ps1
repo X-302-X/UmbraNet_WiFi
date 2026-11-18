@@ -53,6 +53,7 @@ if ($proc.ExitCode -ne 0) { throw "Full-delete test uninstaller failed: $($proc.
 foreach ($path in @($AppearanceDir, $roamingWebview, $localWebview, (Join-Path $Install 'strtegs_Uz'), (Join-Path $Install 'logs'), (Join-Path $Install 'core/dpi/selection.json'), (Join-Path $Install 'core/dpi/services.json'), (Join-Path $Install 'core/dpi/active-domains.txt'), (Join-Path $Install 'data/core/dpi/selection.json'), (Join-Path $Install 'data/core/dpi/services.json'), (Join-Path $Install 'data/core/dpi/active-domains.txt'))) {
     if (Test-Path -LiteralPath $path) { throw "Full uninstall left application data: $path" }
 }
+if (Test-Path -LiteralPath (Join-Path $Install 'core/dpi/driver/WinDivert64.sys')) { throw 'Full uninstall left the unlocked driver file' }
 if (!(Test-Path -LiteralPath (Join-Path $Install 'unrelated-user-file.txt') -PathType Leaf)) { throw 'Full uninstall deleted an unrelated file' }
 Remove-Item -LiteralPath $Install -Recurse -Force
 Write-Host 'Headless full-uninstall data cleanup: OK (UI confirmation requires manual Windows test)'

@@ -76,4 +76,18 @@
       MessageBox MB_ICONEXCLAMATION "Не удалось удалить все данные UmbraNet. Закройте программу и проверьте папки настроек и установки."
     umbra_cleanup_done:
   ${EndIf}
+
+  ; Only the file inside this installation. Never stop/delete the shared
+  ; WinDivert service: it may be in use by other applications. No /REBOOTOK:
+  ; delayed deletion could remove a new installation at the same path.
+  ${If} $UpdateMode <> 1
+    IfFileExists "$INSTDIR\core\dpi\driver\WinDivert64.sys" 0 umbra_driver_cleanup_done
+    ClearErrors
+    Delete "$INSTDIR\core\dpi\driver\WinDivert64.sys"
+    IfFileExists "$INSTDIR\core\dpi\driver\WinDivert64.sys" 0 umbra_driver_cleanup_done
+      SetErrorLevel 1
+      IfSilent umbra_driver_cleanup_done 0
+      MessageBox MB_OK|MB_ICONEXCLAMATION "Не удалось удалить файл драйвера UmbraNet:$\r$\n$INSTDIR\core\dpi\driver\WinDivert64.sys$\r$\n$\r$\nВозможно, драйвер используется Windows или другой программой. Перезагрузите компьютер и проверьте оставшийся файл. Удаляйте его вручную только если он больше не нужен другим программам. Общая служба не останавливалась."
+    umbra_driver_cleanup_done:
+  ${EndIf}
 !macroend

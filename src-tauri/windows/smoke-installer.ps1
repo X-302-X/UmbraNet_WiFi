@@ -55,6 +55,7 @@ foreach ($path in @('strtegs_Uz/pass-through.json','strtegs_Uz/custom.json','str
     Require-File $path
 }
 if (Test-Path (Join-Path $install 'umbranet-wifi.exe')) { throw 'Uninstall did not remove the executable' }
+if (Test-Path -LiteralPath (Join-Path $install 'core/dpi/driver/WinDivert64.sys')) { throw 'Uninstall left the unlocked driver file' }
 Require-Appearance
 Write-Host 'Installer, reinstall and uninstall without data deletion: OK'
 # Reinstall over preserved data, then test the full-delete branch without a desktop.
@@ -73,3 +74,18 @@ $proc = Start-Process -FilePath (Join-Path $install 'uninstall.exe') -ArgumentLi
 if ($proc.ExitCode -ne 0) { throw 'Final test uninstall failed' }
 Remove-Item -LiteralPath $install -Recurse -Force
 Write-Host 'Fresh installation after full uninstall: OK'
+
+# Simulate a locked file, not a loaded kernel driver. The uninstaller must not
+# report success or schedule deletion of a future replacement at the same path.
+Install-Test
+$driver = Join-Path $install 'core/dpi/driver/WinDivert64.sys'
+$lock = [System.IO.File]::Open($driver, [System.IO.FileMode]::Open, [System.IO.FileAccess]::Read, [System.IO.FileShare]::None)
+try {
+    $proc = Start-Process -FilePath (Join-Path $install 'uninstall.exe') -ArgumentList "/S _?=$install" -Wait -PassThru
+    if ($proc.ExitCode -eq 0) { throw 'Uninstaller reported success although the driver file was locked' }
+    if (!(Test-Path -LiteralPath $driver -PathType Leaf)) { throw 'Locked driver file unexpectedly disappeared' }
+} finally {
+    $lock.Dispose()
+}
+Remove-Item -LiteralPath $install -Recurse -Force
+Write-Host 'Locked-file uninstall reports failure: OK (not a test with a loaded driver)'

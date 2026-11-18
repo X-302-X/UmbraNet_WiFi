@@ -27,6 +27,7 @@ fn main() {
             dpi_bridge::dpi_get,
             dpi_bridge::dpi_apply,
             dpi_bridge::dpi_diagnostic_status,
+            dpi_bridge::dpi_diagnostic_clear_events,
             dpi_bridge::dpi_diagnostic_start,
             dpi_bridge::dpi_diagnostic_stop,
             dpi_bridge::dpi_strategy_list,

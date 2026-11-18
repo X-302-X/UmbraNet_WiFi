@@ -144,11 +144,18 @@
     if (busy) return;
     busy = true;
     status("");
+    window.umbraJournal?.add("system", start ? "Пользователь запросил запуск DPI." : "Пользователь нажал «Стоп» DPI; запрошена остановка.");
     render();
     try {
       view = parse(await invoke(start ? "dpi_engine_start" : "dpi_engine_stop"));
-      if (view?.last_error) status(view.last_error, true);
+      if (view?.last_error) {
+        status(view.last_error, true);
+        window.umbraJournal?.add("error", `DPI: ${view.last_error}`);
+      } else {
+        window.umbraJournal?.add("system", start ? "Команда запуска DPI вернулась; состояние смотрите в интерфейсе." : "Команда остановки DPI вернулась; подтверждение очистки ещё не реализовано.");
+      }
     } catch (error) {
+      window.umbraJournal?.add("error", `DPI: ${String(error)}`);
       status(String(error), true);
     } finally {
       busy = false;
