@@ -33,7 +33,8 @@ impl Observer for FakeObserver {
         let mut state = self.state.lock().unwrap();
         loop {
             if state.stopped {
-                return Err(io::Error::new(io::ErrorKind::BrokenPipe, "stopped"));
+                // Имитируем ERROR_NO_DATA, который WinDivert возвращает после shutdown.
+                return Err(io::Error::from_raw_os_error(232));
             }
             if let Some(event) = state.events.pop_front() {
                 return Ok(event);
@@ -177,17 +178,23 @@ fn failed_shutdown_is_not_reported_as_success() {
         .unwrap();
     wait_for(|| d.view().unwrap().phase == Phase::Running);
     d.stop().unwrap();
+    wait_for(|| d.view().unwrap().phase == Phase::StopFailed);
     let view = d.view().unwrap();
-    assert_eq!(view.phase, Phase::StopFailed);
     assert!(view.busy);
-    assert!(view.message.unwrap().contains("Закройте программу"));
+    assert!(view.message.unwrap().contains("Повторный запуск"));
     {
         let mut state = source.state.lock().unwrap();
         state.fail_stop = false;
         state.stopped = true;
     }
     source.changed.notify_all();
-    wait_for(|| !d.view().unwrap().busy);
+    // Даже после выхода worker не подменяем неудачный shutdown успехом.
+    wait_for(|| Arc::strong_count(&source) <= 2);
+    assert_eq!(d.view().unwrap().phase, Phase::StopFailed);
+    assert!(d.view().unwrap().busy);
+    assert!(d
+        .start(backend(&source, false), plan(), BTreeSet::new())
+        .is_err());
 }
 
 struct SlowBackend {
@@ -235,6 +242,7 @@ fn stop_during_open_never_enters_running_state() {
 struct DelayedShutdown {
     source: FakeObserver,
     gate: Arc<(Mutex<bool>, Condvar)>,
+    fail: bool,
 }
 impl Observer for DelayedShutdown {
     fn receive(&self) -> io::Result<Option<Observation>> {
@@ -247,7 +255,11 @@ impl Observer for DelayedShutdown {
         while !*release {
             release = wake.wait(release).unwrap();
         }
-        Ok(())
+        if self.fail {
+            Err(io::Error::other("delayed shutdown failure"))
+        } else {
+            Ok(())
+        }
     }
 }
 struct DelayedBackend(Arc<DelayedShutdown>);
@@ -265,6 +277,7 @@ fn session_remains_busy_until_shutdown_finishes_even_if_receive_has_exited() {
     let source = Arc::new(DelayedShutdown {
         source: FakeObserver::default(),
         gate: gate.clone(),
+        fail: false,
     });
     let d = Arc::new(Diagnostics::new(Duration::from_secs(5)));
     d.start(
@@ -294,4 +307,221 @@ fn session_remains_busy_until_shutdown_finishes_even_if_receive_has_exited() {
     stopper.join().unwrap().unwrap();
     wait_for(|| !d.view().unwrap().busy);
     assert_eq!(d.view().unwrap().phase, Phase::Finished);
+}
+
+#[test]
+fn delayed_shutdown_failure_is_not_hidden_by_early_worker_exit() {
+    let gate = Arc::new((Mutex::new(false), Condvar::new()));
+    let source = Arc::new(DelayedShutdown {
+        source: FakeObserver::default(),
+        gate: gate.clone(),
+        fail: true,
+    });
+    let d = Arc::new(Diagnostics::new(Duration::from_secs(5)));
+    d.start(
+        Arc::new(DelayedBackend(source.clone())),
+        plan(),
+        BTreeSet::new(),
+    )
+    .unwrap();
+    wait_for(|| d.view().unwrap().phase == Phase::Running);
+    let (done_tx, done_rx) = std::sync::mpsc::channel();
+    let stop = {
+        let d = d.clone();
+        thread::spawn(move || done_tx.send(d.stop()).unwrap())
+    };
+    // Stop возвращает управление, хотя Shutdown всё ещё ждёт gate.
+    done_rx
+        .recv_timeout(Duration::from_secs(2))
+        .expect("stop blocked")
+        .unwrap();
+    stop.join().unwrap();
+    wait_for(|| source.source.state.lock().unwrap().stopped);
+    // Backend и receive worker отпустили ссылки, а Shutdown ещё удерживает свою.
+    wait_for(|| Arc::strong_count(&source) <= 3);
+    assert_eq!(d.view().unwrap().phase, Phase::Stopping);
+    assert!(d.view().unwrap().busy);
+    let (lock, wake) = &*gate;
+    *lock.lock().unwrap() = true;
+    wake.notify_all();
+    wait_for(|| d.view().unwrap().phase == Phase::StopFailed);
+    let view = d.view().unwrap();
+    assert!(view.busy);
+    assert!(view.message.unwrap().contains("delayed shutdown failure"));
+    assert!(d
+        .start(
+            backend(&Arc::new(FakeObserver::default()), false),
+            plan(),
+            BTreeSet::new()
+        )
+        .is_err());
+}
+
+struct UnexpectedReceiveError {
+    gate: Mutex<(bool, bool)>,
+    cv: Condvar,
+    fail_shutdown: bool,
+    panic_shutdown: bool,
+}
+impl Observer for UnexpectedReceiveError {
+    fn receive(&self) -> io::Result<Option<Observation>> {
+        let mut s = self.gate.lock().unwrap();
+        s.0 = true;
+        self.cv.notify_all();
+        while !s.1 {
+            s = self.cv.wait(s).unwrap();
+        }
+        Err(io::Error::from_raw_os_error(5))
+    }
+    fn shutdown(&self) -> io::Result<()> {
+        let mut s = self.gate.lock().unwrap();
+        s.1 = true;
+        self.cv.notify_all();
+        drop(s);
+        if self.panic_shutdown {
+            panic!("mock shutdown panic");
+        }
+        if self.fail_shutdown {
+            Err(io::Error::other("shutdown failed too"))
+        } else {
+            Ok(())
+        }
+    }
+}
+struct UnexpectedBackend(Arc<UnexpectedReceiveError>);
+impl Backend for UnexpectedBackend {
+    fn open(&self, _: &CapturePlan) -> io::Result<Arc<dyn Observer>> {
+        Ok(self.0.clone())
+    }
+    fn process_name(&self, _: u32) -> io::Result<String> {
+        Ok("test.exe".into())
+    }
+}
+#[test]
+fn unexpected_receive_error_during_stop_is_reported_not_hidden() {
+    let source = Arc::new(UnexpectedReceiveError {
+        gate: Mutex::new((false, false)),
+        cv: Condvar::new(),
+        fail_shutdown: false,
+        panic_shutdown: false,
+    });
+    let d = Diagnostics::new(Duration::from_secs(5));
+    d.start(
+        Arc::new(UnexpectedBackend(source.clone())),
+        plan(),
+        BTreeSet::new(),
+    )
+    .unwrap();
+    wait_for(|| source.gate.lock().unwrap().0);
+    d.stop().unwrap();
+    wait_for(|| !d.view().unwrap().busy);
+    let view = d.view().unwrap();
+    assert_eq!(view.phase, Phase::Error);
+    assert!(view
+        .message
+        .unwrap()
+        .contains("Не удалось получить событие"));
+}
+
+#[test]
+fn concurrent_shutdown_and_receive_failures_are_both_visible() {
+    let source = Arc::new(UnexpectedReceiveError {
+        gate: Mutex::new((false, false)),
+        cv: Condvar::new(),
+        fail_shutdown: true,
+        panic_shutdown: false,
+    });
+    let d = Diagnostics::new(Duration::from_secs(5));
+    d.start(
+        Arc::new(UnexpectedBackend(source.clone())),
+        plan(),
+        BTreeSet::new(),
+    )
+    .unwrap();
+    wait_for(|| source.gate.lock().unwrap().0);
+    d.stop().unwrap();
+    wait_for(|| {
+        let v = d.view().unwrap();
+        v.phase == Phase::StopFailed
+            && v.message.as_deref().is_some_and(|m| {
+                m.contains("shutdown failed too") && m.contains("Не удалось получить событие")
+            })
+    });
+    assert!(d.view().unwrap().busy);
+    assert!(d
+        .start(
+            backend(&Arc::new(FakeObserver::default()), false),
+            plan(),
+            BTreeSet::new()
+        )
+        .is_err());
+}
+
+#[test]
+fn shutdown_panic_is_reported_and_worker_error_is_not_hidden() {
+    let source = Arc::new(UnexpectedReceiveError {
+        gate: Mutex::new((false, false)),
+        cv: Condvar::new(),
+        fail_shutdown: false,
+        panic_shutdown: true,
+    });
+    let d = Diagnostics::new(Duration::from_secs(5));
+    d.start(
+        Arc::new(UnexpectedBackend(source.clone())),
+        plan(),
+        BTreeSet::new(),
+    )
+    .unwrap();
+    wait_for(|| source.gate.lock().unwrap().0);
+    d.stop().unwrap();
+    wait_for(|| {
+        let v = d.view().unwrap();
+        v.phase == Phase::StopFailed
+            && v.message
+                .as_deref()
+                .is_some_and(|m| m.contains("panic") && m.contains("Не удалось получить событие"))
+    });
+    assert!(d.view().unwrap().busy);
+    assert_eq!(d.stop().unwrap().phase, Phase::StopFailed);
+}
+
+struct SlowFailedOpen {
+    gate: Arc<(Mutex<(bool, bool)>, Condvar)>,
+}
+impl Backend for SlowFailedOpen {
+    fn open(&self, _: &CapturePlan) -> io::Result<Arc<dyn Observer>> {
+        let (lock, cv) = &*self.gate;
+        let mut s = lock.lock().unwrap();
+        s.0 = true;
+        cv.notify_all();
+        while !s.1 {
+            s = cv.wait(s).unwrap();
+        }
+        Err(io::Error::other("open failed after cancel"))
+    }
+    fn process_name(&self, _: u32) -> io::Result<String> {
+        Ok("test.exe".into())
+    }
+}
+#[test]
+fn cancelled_open_failure_is_not_reported_as_success() {
+    let gate = Arc::new((Mutex::new((false, false)), Condvar::new()));
+    let d = Diagnostics::new(Duration::from_secs(5));
+    d.start(
+        Arc::new(SlowFailedOpen { gate: gate.clone() }),
+        plan(),
+        BTreeSet::new(),
+    )
+    .unwrap();
+    wait_for(|| gate.0.lock().unwrap().0);
+    d.stop().unwrap();
+    {
+        let mut s = gate.0.lock().unwrap();
+        s.1 = true;
+        gate.1.notify_all();
+    }
+    wait_for(|| !d.view().unwrap().busy);
+    let view = d.view().unwrap();
+    assert_eq!(view.phase, Phase::Error);
+    assert!(view.message.unwrap().contains("open failed after cancel"));
 }

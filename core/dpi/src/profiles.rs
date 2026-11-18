@@ -35,7 +35,8 @@ impl Profiles {
                 items: Vec::new(),
             });
         }
-        let entries = fs::read_dir(dir).map_err(|e| format!("Не удалось прочитать {}: {e}", dir.display()))?;
+        let entries = fs::read_dir(dir)
+            .map_err(|e| format!("Не удалось прочитать {}: {e}", dir.display()))?;
         let mut items = Vec::new();
         for entry in entries {
             let entry = entry.map_err(|e| format!("Ошибка чтения папки стратегий: {e}"))?;
@@ -58,7 +59,10 @@ impl Profiles {
         // Дубли id делают выбор неоднозначным — отказываемся загружать такие наборы.
         for pair in items.windows(2) {
             if pair[0].strategy.id == pair[1].strategy.id {
-                return Err(format!("Дублирующийся идентификатор стратегии: {}", pair[0].strategy.id));
+                return Err(format!(
+                    "Дублирующийся идентификатор стратегии: {}",
+                    pair[0].strategy.id
+                ));
             }
         }
         Ok(Self {
@@ -113,15 +117,16 @@ impl Profiles {
             .map_err(|e| format!("Не удалось сохранить выбор стратегии: {e}"))
     }
 
-    /// При первом запуске выбирает первую доступную стратегию.
+    /// По умолчанию только явная pass-through стратегия. Без неё не выбираем
+    /// активный профиль автоматически; существующий выбор не перезаписываем.
     pub fn ensure_selected(&self) -> Result<Option<String>, String> {
         if let Some(id) = self.selected_id() {
             return Ok(Some(id));
         }
-        let Some(first) = self.items.first() else {
+        let Some(safe) = self.get("pass-through").filter(|s| s.is_pass_through()) else {
             return Ok(None);
         };
-        let id = first.strategy.id.clone();
+        let id = safe.id.clone();
         self.select(&id)?;
         Ok(Some(id))
     }

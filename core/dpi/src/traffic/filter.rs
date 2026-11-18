@@ -93,14 +93,22 @@ fn parse_cidr(s: &str) -> Option<Cidr> {
         let prefix: u32 = prefix_str.parse().ok()?;
         match ip_str.parse::<IpAddr>().ok()? {
             IpAddr::V4(v4) if prefix <= 32 => {
-                let mask = if prefix == 0 { 0 } else { !0u32 << (32 - prefix) };
+                let mask = if prefix == 0 {
+                    0
+                } else {
+                    !0u32 << (32 - prefix)
+                };
                 Some(Cidr::V4 {
                     net: u32::from(v4) & mask,
                     mask,
                 })
             }
             IpAddr::V6(v6) if prefix <= 128 => {
-                let mask = if prefix == 0 { 0 } else { !0u128 << (128 - prefix) };
+                let mask = if prefix == 0 {
+                    0
+                } else {
+                    !0u128 << (128 - prefix)
+                };
                 Some(Cidr::V6 {
                     net: u128::from(v6) & mask,
                     mask,

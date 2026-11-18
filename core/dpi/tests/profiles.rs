@@ -4,7 +4,8 @@ use umbranet_dpi::strategy::{Action, Strategy};
 use umbranet_dpi::traffic::filter::{HostList, IpSet};
 
 fn temp_dir(name: &str) -> std::path::PathBuf {
-    let dir = std::env::temp_dir().join(format!("umbranet-profiles-{}-{}", name, std::process::id()));
+    let dir =
+        std::env::temp_dir().join(format!("umbranet-profiles-{}-{}", name, std::process::id()));
     let _ = std::fs::remove_dir_all(&dir);
     std::fs::create_dir_all(&dir).unwrap();
     dir
@@ -37,8 +38,11 @@ fn loads_sorts_and_selects_profiles() {
 
     assert_eq!(profiles.selected_id(), None);
     let selected = profiles.ensure_selected().unwrap();
-    assert_eq!(selected.as_deref(), Some("a-profile"));
-    assert_eq!(profiles.selected_id().as_deref(), Some("a-profile"));
+    assert_eq!(
+        selected, None,
+        "без pass-through активный профиль не выбирается автоматически"
+    );
+    assert_eq!(profiles.selected_id(), None);
 
     profiles.select("b-profile").unwrap();
     assert_eq!(profiles.selected_id().as_deref(), Some("b-profile"));
@@ -85,10 +89,9 @@ fn udp_fake_action_is_parsed() {
 
 #[test]
 fn engine_passes_through_foreign_traffic() {
-    let strategy = Strategy::from_json(
-        r#"{"version":1,"id":"p","name":"P","actions":["pass_through"]}"#,
-    )
-    .unwrap();
+    let strategy =
+        Strategy::from_json(r#"{"version":1,"id":"p","name":"P","actions":["pass_through"]}"#)
+            .unwrap();
     let mut engine = Engine::new(strategy, HostList::default(), IpSet::default());
 
     // IPv4 TCP 443 с payload
@@ -125,4 +128,40 @@ fn hostlist_and_ipset_filtering() {
     assert!(set.contains("8.8.8.8".parse().unwrap()));
     assert!(set.contains("2a00:1450::1".parse().unwrap()));
     assert!(!set.contains("2a00:1451::1".parse().unwrap()));
+}
+
+#[test]
+fn safe_default_is_pass_through_and_existing_selection_is_preserved() {
+    let dir = temp_dir("safe-default");
+    write(
+        &dir,
+        "a.json",
+        r#"{"version":1,"id":"aaa-active","name":"Active","actions":[{"disorder":{"positions":["sld"]}}]}"#,
+    );
+    write(
+        &dir,
+        "pass-through.json",
+        r#"{"version":1,"id":"pass-through","name":"Safe","actions":["pass_through"]}"#,
+    );
+    let p = Profiles::load(&dir).unwrap();
+    assert_eq!(
+        p.ensure_selected().unwrap().as_deref(),
+        Some("pass-through")
+    );
+    p.select("aaa-active").unwrap();
+    assert_eq!(p.ensure_selected().unwrap().as_deref(), Some("aaa-active"));
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn pass_through_name_does_not_make_active_strategy_safe() {
+    let dir = temp_dir("fake-safe");
+    write(
+        &dir,
+        "evil.json",
+        r#"{"version":1,"id":"pass-through","name":"Not safe","actions":[{"disorder":{"positions":["sld"]}}]}"#,
+    );
+    let p = Profiles::load(&dir).unwrap();
+    assert_eq!(p.ensure_selected().unwrap(), None);
+    let _ = std::fs::remove_dir_all(&dir);
 }

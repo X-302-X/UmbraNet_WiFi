@@ -31,7 +31,12 @@ pub fn is_quic_initial(payload: &[u8]) -> bool {
 /// Проверяет, похож ли UDP payload на Discord IP Discovery или STUN/RTP.
 pub fn is_discord_voice_or_stun(payload: &[u8]) -> bool {
     // Discord IP Discovery: 74 байта, type 0x0001 (request), length 70 (0x0046)
-    if payload.len() == 74 && payload[0] == 0x00 && payload[1] == 0x01 && payload[2] == 0x00 && payload[3] == 0x46 {
+    if payload.len() == 74
+        && payload[0] == 0x00
+        && payload[1] == 0x01
+        && payload[2] == 0x00
+        && payload[3] == 0x46
+    {
         return true;
     }
     // STUN: magic cookie 0x2112A442 на смещении 4..8
@@ -93,7 +98,11 @@ pub fn build_fake_udp(
         return Err(DesyncError::Unsupported);
     }
     let ipv6 = raw[0] >> 4 == 6;
-    let ip_len = if ipv6 { 40 } else { ((raw[0] & 0x0f) as usize) * 4 };
+    let ip_len = if ipv6 {
+        40
+    } else {
+        ((raw[0] & 0x0f) as usize) * 4
+    };
     let header_len = ip_len + 8;
     if raw.len() < header_len {
         return Err(DesyncError::Unsupported);

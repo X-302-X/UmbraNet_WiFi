@@ -14,8 +14,8 @@ fn build_ipv4_tcp_packet(payload: &[u8]) -> Vec<u8> {
     pkt[2..4].copy_from_slice(&(total_len as u16).to_be_bytes());
     pkt[4..6].copy_from_slice(&0x1234u16.to_be_bytes());
     pkt[6] = 0x40; // DF
-    pkt[8] = 64;   // TTL
-    pkt[9] = 6;    // TCP
+    pkt[8] = 64; // TTL
+    pkt[9] = 6; // TCP
     pkt[12..16].copy_from_slice(&[192, 168, 1, 10]);
     pkt[16..20].copy_from_slice(&[142, 250, 74, 14]);
     // TCP header

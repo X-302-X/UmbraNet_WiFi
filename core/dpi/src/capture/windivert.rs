@@ -1,4 +1,4 @@
-//! Только копии исходящих пакетов на ограниченных портах. Здесь нет WinDivertSend.
+//! Пассивный Sniffer и отдельный активный DivertChannel (требует WinDivertSend).
 //! Запуск возможен лишь явным вызовом open, требует админправа и может установить драйвер.
 use super::CapturePlan;
 use crate::flow::wire::{self, FlowEvent, RawAddress};
@@ -16,52 +16,7 @@ const MAX_PACKET: usize = 40 + 65_535;
 const LOAD_LIBRARY_SEARCH_DLL_LOAD_DIR: u32 = 0x0000_0100;
 const LOAD_LIBRARY_SEARCH_SYSTEM32: u32 = 0x0000_0800;
 
-/// Структура WINDIVERT_ADDRESS из windivert.h (64 байта, x64).
-#[repr(C)]
-#[derive(Clone, Copy)]
-pub struct WinDivertAddress {
-    pub timestamp: i64,
-    pub layer: u8,
-    pub event: u8,
-    raw_flags: u8,
-    reserved2: u8,
-    reserved3: u32,
-    pub reserved: [u32; 6],
-}
-
-impl Default for WinDivertAddress {
-    fn default() -> Self {
-        Self {
-            timestamp: 0,
-            layer: 0,
-            event: 0,
-            raw_flags: 0,
-            reserved2: 0,
-            reserved3: 0,
-            reserved: [0; 6],
-        }
-    }
-}
-
-impl WinDivertAddress {
-    /// Бит 0 байта flags — направление пакета (1 = outbound).
-    pub fn outbound(&self) -> bool {
-        self.raw_flags & 1 != 0
-    }
-    pub fn loopback(&self) -> bool {
-        self.raw_flags & 2 != 0
-    }
-    pub fn impostor(&self) -> bool {
-        self.raw_flags & 4 != 0
-    }
-    pub fn set_outbound(&mut self, value: bool) {
-        if value {
-            self.raw_flags |= 1;
-        } else {
-            self.raw_flags &= !1;
-        }
-    }
-}
+pub use super::address::WinDivertAddress;
 
 type Handle = *mut c_void;
 type OpenFn = unsafe extern "C" fn(*const c_char, i32, i16, u64) -> Handle;
@@ -134,8 +89,9 @@ pub struct Sniffer {
     _library: Library,
 }
 
-// WinDivertShutdown поддерживает отмену заблокированного WinDivertRecv из другого потока.
-// Деструктор вызывается только когда у владельца больше не осталось ссылок на Sniffer.
+// Shutdown(RECV) запрещает новую очередь, но уже поставленные события ещё
+// могут возвращаться из Recv до ERROR_NO_DATA. Деструктор вызывается только
+// когда у владельца больше не осталось ссылок на Sniffer.
 unsafe impl Send for Sniffer {}
 unsafe impl Sync for Sniffer {}
 
@@ -265,6 +221,9 @@ unsafe impl Sync for DivertChannel {}
 
 impl DivertChannel {
     pub fn open(dll_path: &Path, filter_text: &str) -> io::Result<Self> {
+        // Даже низкоуровневый активный канал не открываем до отдельного ревью.
+        crate::safety::active_start_guard()
+            .map_err(|e| io::Error::new(io::ErrorKind::PermissionDenied, e))?;
         let filter = CString::new(filter_text)
             .map_err(|_| io::Error::new(io::ErrorKind::InvalidInput, "Некорректный фильтр"))?;
         let library = Library::load(dll_path)?;

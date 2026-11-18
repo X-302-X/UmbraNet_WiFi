@@ -179,23 +179,54 @@ fn request_stop(shared: &Arc<Shared>, expected_id: Option<u64>) -> Result<(), St
         (state.session_id, source)
     };
     if let Some(source) = source {
-        let result = source.shutdown();
-        // Последний клонированный handle должен быть освобождён до объявления конца сессии.
-        drop(source);
-        let mut state = shared
-            .state
-            .lock()
-            .map_err(|_| "Состояние диагностики недоступно")?;
-        if state.session_id == session_id {
-            state.shutdown_in_flight = false;
-            if let Some(error) = state.pending_finish.take() {
-                finalize(&mut state, error);
-            } else if let Err(error) = result {
+        // Shutdown может блокироваться; не выполняем его в вызывающем потоке UI.
+        let worker_shared = shared.clone();
+        let spawned = thread::Builder::new()
+            .name("umbra-flow-shutdown".into())
+            .spawn(move || {
+                let result =
+                    std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| source.shutdown()));
+                // Ссылка операции не должна пережить обработку её результата.
+                drop(source);
+                let failure = match result {
+                    Ok(Ok(())) => None,
+                    Ok(Err(error)) => {
+                        Some(format!("Не удалось остановить получение событий: {error}"))
+                    }
+                    Err(_) => Some("Ошибка при остановке получения событий (panic)".to_string()),
+                };
+                if let Ok(mut state) = worker_shared.state.lock() {
+                    if state.session_id != session_id {
+                        return;
+                    }
+                    state.shutdown_in_flight = false;
+                    if let Some(message) = failure {
+                        state.view.phase = Phase::StopFailed;
+                        let worker_error = state.pending_finish.as_ref().and_then(|e| e.as_deref());
+                        state.view.message = Some(match worker_error {
+                            Some(worker_error) => format!("{message}; {worker_error}. Повторный запуск диагностики заблокирован."),
+                            None => format!("{message}. Повторный запуск диагностики заблокирован."),
+                        });
+                    } else if let Some(error) = state.pending_finish.take() {
+                        finalize(&mut state, error);
+                    }
+                }
+            });
+        if let Err(error) = spawned {
+            let mut state = shared
+                .state
+                .lock()
+                .map_err(|_| "Состояние диагностики недоступно")?;
+            if state.session_id == session_id {
+                state.shutdown_in_flight = false;
                 state.view.phase = Phase::StopFailed;
-                state.view.message = Some(format!(
-                    "Не удалось остановить получение событий: {error}. Закройте программу."
-                ));
+                let worker_error = state.pending_finish.as_ref().and_then(|e| e.as_deref());
+                state.view.message = Some(match worker_error {
+                    Some(worker_error) => format!("Не удалось запустить остановку: {error}; {worker_error}. Повторный запуск диагностики заблокирован."),
+                    None => format!("Не удалось запустить остановку: {error}. Повторный запуск диагностики заблокирован."),
+                });
             }
+            return Err(format!("Не удалось запустить остановку: {error}"));
         }
     }
     Ok(())
@@ -219,6 +250,13 @@ fn finish(shared: &Arc<Shared>, session_id: u64, error: Option<String>) {
             return;
         }
         if state.shutdown_in_flight {
+            state.pending_finish = Some(error);
+        } else if state.view.phase == Phase::StopFailed {
+            // Не скрывать отказ shutdown и не терять последующую ошибку receive.
+            if let Some(worker_error) = error.as_deref() {
+                let previous = state.view.message.as_deref().unwrap_or("Ошибка остановки");
+                state.view.message = Some(format!("{previous} {worker_error}"));
+            }
             state.pending_finish = Some(error);
         } else {
             finalize(&mut state, error);
@@ -255,19 +293,11 @@ fn run(
         Ok(source) => source,
         Err(error) => {
             let _ = timer_done.send(());
-            let cancelled = shared
-                .state
-                .lock()
-                .map(|s| s.requested_stop)
-                .unwrap_or(false);
+            // Даже при отмене сохраняем ошибку открытия, а не выдаём успех.
             finish(
                 &shared,
                 session_id,
-                if cancelled {
-                    None
-                } else {
-                    Some(format!("Не удалось открыть WinDivert: {error}"))
-                },
+                Some(format!("Не удалось открыть WinDivert: {error}")),
             );
             return;
         }
@@ -308,7 +338,9 @@ fn run(
                     .lock()
                     .map(|s| s.requested_stop)
                     .unwrap_or(true);
-                if !stopping {
+                // После WinDivertShutdown(RECV) ожидается ERROR_NO_DATA (232).
+                // Остальные ошибки нельзя превращать в успех только из-за Stop.
+                if !stopping || error.raw_os_error() != Some(232) {
                     failure = Some(format!("Не удалось получить событие: {error}"));
                 }
                 break;
@@ -341,12 +373,8 @@ fn run(
             break;
         }
     }
-    // Убираем handle из состояния до уведомления об окончании.
-    if let Ok(mut s) = shared.state.lock() {
-        if s.session_id == session_id {
-            s.source = None;
-        }
-    }
+    // При неудачном shutdown владелец в состоянии остаётся удержанным;
+    // при успешном завершении finalize снимет последнюю известную ссылку.
     drop(source);
     let _ = timer_done.send(());
     finish(&shared, session_id, failure);

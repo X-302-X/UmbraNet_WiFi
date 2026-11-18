@@ -156,7 +156,11 @@ fn find_http_host_range(payload: &[u8]) -> Option<(usize, usize)> {
                 start += 1;
             }
             let mut end = start;
-            while end < slice.len() && slice[end] != b'\r' && slice[end] != b'\n' && slice[end] != b':' {
+            while end < slice.len()
+                && slice[end] != b'\r'
+                && slice[end] != b'\n'
+                && slice[end] != b':'
+            {
                 end += 1;
             }
             if end > start {
@@ -223,7 +227,14 @@ fn find_tls_sni_range(payload: &[u8]) -> Option<(usize, usize)> {
 
 fn find_http_method_end(payload: &[u8]) -> Option<usize> {
     const METHODS: &[&[u8]] = &[
-        b"GET ", b"POST ", b"HEAD ", b"PUT ", b"DELETE ", b"OPTIONS ", b"PATCH ", b"CONNECT ",
+        b"GET ",
+        b"POST ",
+        b"HEAD ",
+        b"PUT ",
+        b"DELETE ",
+        b"OPTIONS ",
+        b"PATCH ",
+        b"CONNECT ",
     ];
     for m in METHODS {
         if payload.starts_with(m) && payload.len() > m.len() {
@@ -299,7 +310,11 @@ pub fn build_fake_tcp(
     }
     let _tcp = packet.tcp.ok_or(DesyncError::Unsupported)?;
     let ipv6 = raw[0] >> 4 == 6;
-    let ip_len = if ipv6 { 40 } else { ((raw[0] & 0x0f) as usize) * 4 };
+    let ip_len = if ipv6 {
+        40
+    } else {
+        ((raw[0] & 0x0f) as usize) * 4
+    };
     if raw.len() < ip_len + 20 {
         return Err(DesyncError::Unsupported);
     }
@@ -391,7 +406,11 @@ pub fn apply_desync(raw: &[u8], plan: &DesyncPlan) -> Result<Vec<Vec<u8>>, Desyn
     }
 
     let ipv6 = raw[0] >> 4 == 6;
-    let ip_len = if ipv6 { 40 } else { ((raw[0] & 0x0f) as usize) * 4 };
+    let ip_len = if ipv6 {
+        40
+    } else {
+        ((raw[0] & 0x0f) as usize) * 4
+    };
     if raw.len() < ip_len + 20 {
         return Err(DesyncError::Unsupported);
     }

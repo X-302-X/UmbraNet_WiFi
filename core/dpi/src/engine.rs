@@ -4,7 +4,8 @@
 
 use crate::autohostlist::{failure_kind, AutoHostList};
 use crate::strategy::Strategy;
-use crate::traffic::desync::{apply_desync, find_host_range, Fooling};
+use crate::traffic::application::{inspect_tcp, Evidence};
+use crate::traffic::desync::{apply_desync, Fooling};
 use crate::traffic::filter::{HostList, IpSet};
 use crate::traffic::packet::{parse_ip, Protocol};
 use crate::traffic::udp_desync::{apply_udp_desync, is_discord_voice_or_stun, is_quic_initial};
@@ -16,11 +17,11 @@ use crate::capture::windivert::DivertChannel;
 #[cfg(all(windows, target_arch = "x86_64"))]
 use std::io;
 #[cfg(all(windows, target_arch = "x86_64"))]
-use std::sync::mpsc::Sender;
-#[cfg(all(windows, target_arch = "x86_64"))]
 use std::path::Path;
 #[cfg(all(windows, target_arch = "x86_64"))]
 use std::sync::atomic::{AtomicBool, Ordering};
+#[cfg(all(windows, target_arch = "x86_64"))]
+use std::sync::mpsc::Sender;
 
 /// Ограничение кэша TTL, чтобы долгая сессия не росла бесконечно.
 const MAX_TTL_ENTRIES: usize = 4096;
@@ -77,10 +78,8 @@ impl Engine {
     }
 
     fn host_allowed(&self, host: &str) -> bool {
-        if self.hostlist.matches(host) {
-            return true;
-        }
-        self.auto.as_ref().map(|a| a.contains(host)).unwrap_or(false)
+        // Autohostlist не должна расширять явно выбранную область.
+        self.hostlist.matches(host)
     }
 
     /// Заменяет активную стратегию без пересоздания движка.
@@ -165,32 +164,26 @@ impl Engine {
 
         match parsed.protocol {
             Protocol::Tcp => {
-                let host = find_host_range(parsed.payload)
-                    .map(|(s, e)| String::from_utf8_lossy(&parsed.payload[s..e]).to_ascii_lowercase());
-                if let Some(host) = &host {
-                    if host.contains('.') {
-                        self.pending
-                            .insert((dst_ip, parsed.destination_port), (host.clone(), std::time::Instant::now()));
-                    }
-                }
-
-                // Фильтры включаются только когда что-то задано:
-                // иначе обход применялся бы ко всему TCP.
-                let domain_filter = !self.hostlist.is_empty() || self.auto.is_some();
-                let host_matched = domain_filter
-                    && host
-                        .as_deref()
-                        .map(|h| self.host_allowed(h))
-                        .unwrap_or(false);
-                let ip_matched = !self.ipset.is_empty() && self.ipset.contains(dst_ip);
-                let allowed = if !domain_filter && self.ipset.is_empty() {
-                    true
-                } else {
-                    host_matched || ip_matched
+                // Это только синтаксический разбор одного payload, а не доказательство
+                // начала TCP-потока. Активный запуск отдельно заблокирован до внедрения
+                // проверенного жизненного цикла соединений.
+                let host = match inspect_tcp(parsed.payload, true) {
+                    Evidence::HttpHost(host) | Evidence::TlsServerName(host) => host,
+                    Evidence::EncryptedClientHello | Evidence::Unknown => return vec![raw.to_vec()],
                 };
-                if !allowed {
+                // IP/CDN может быть общим, а autohostlist — не явный выбор пользователя.
+                if !self.host_allowed(&host) {
                     return vec![raw.to_vec()];
                 }
+                self.pending
+                    .retain(|_, (_, at)| at.elapsed().as_secs() <= PENDING_TTL_SECS);
+                if self.pending.len() >= MAX_TTL_ENTRIES {
+                    self.pending.clear();
+                }
+                self.pending.insert(
+                    (dst_ip, parsed.destination_port),
+                    (host, std::time::Instant::now()),
+                );
 
                 let sttl = self.server_ttl.get(&dst_ip).copied();
                 let plan = self.strategy.to_desync_plan(sttl);
@@ -201,6 +194,11 @@ impl Engine {
                 }
             }
             Protocol::Udp => {
+                // Формат QUIC/STUN и IP не подтверждают принадлежность выбранному
+                // сервису или процессу. До надёжной привязки не изменяем UDP.
+                if !crate::safety::udp_target_verified() {
+                    return vec![raw.to_vec()];
+                }
                 let ip_matched = self.ipset.is_empty() || self.ipset.contains(dst_ip);
                 if !ip_matched {
                     return vec![raw.to_vec()];
@@ -255,6 +253,11 @@ impl Engine {
         channel: &crate::capture::windivert::DivertChannel,
         stop_flag: &AtomicBool,
     ) -> io::Result<()> {
+        // Даже при наличии канала цикл нельзя включать до безопасного drain.
+        crate::safety::active_start_guard()
+            .map_err(|e| io::Error::new(io::ErrorKind::PermissionDenied, e))?;
+        // ВАЖНО: прежний цикл ниже НЕ вычитывает всю очередь после Shutdown(RECV)
+        // и скрывает некоторые ошибки при stop. Он остаётся заблокированным.
         while !stop_flag.load(Ordering::Relaxed) {
             let (raw, addr) = match channel.receive() {
                 Ok(res) => res,
@@ -263,12 +266,13 @@ impl Engine {
             };
             let outbound = addr.outbound();
             let out_packets = self.process_packet(&raw, outbound);
-            for pkt in out_packets {
-                // Копии фейков и сегментов должны уходить в том же направлении.
+            // Нельзя игнорировать ошибку: частичная пачка не является успехом.
+            // Этот шаг не обеспечивает rollback и не делает запуск безопасным.
+            crate::traffic::reinject::send_packets(&out_packets, |pkt| {
                 let mut out_addr = addr;
                 out_addr.set_outbound(outbound);
-                let _ = channel.send(&pkt, &out_addr);
-            }
+                channel.send(pkt, &out_addr).map(|sent| sent as usize)
+            })?;
         }
         Ok(())
     }

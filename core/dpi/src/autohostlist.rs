@@ -98,7 +98,8 @@ impl AutoHostList {
 
     fn save(&self) -> Result<(), String> {
         if let Some(parent) = self.path.parent() {
-            fs::create_dir_all(parent).map_err(|e| format!("Не удалось создать {}: {e}", parent.display()))?;
+            fs::create_dir_all(parent)
+                .map_err(|e| format!("Не удалось создать {}: {e}", parent.display()))?;
         }
         let stored = Stored {
             version: 1,

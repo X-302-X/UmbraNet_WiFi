@@ -7,6 +7,7 @@ pub mod desync;
 pub mod filter;
 pub mod offline_tcp;
 pub mod packet;
+pub mod reinject;
 pub mod stream;
 pub mod synthetic_split;
 pub mod tcp_options;

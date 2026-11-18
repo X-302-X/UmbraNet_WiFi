@@ -3,6 +3,8 @@
 use crate::catalog::Catalog;
 use crate::selection::{Selection, Snapshot};
 
+pub mod address;
+
 const WEB: &str = "outbound and !loopback and (tcp.DstPort == 80 or tcp.DstPort == 443 or tcp.DstPort == 2053 or tcp.DstPort == 2083 or tcp.DstPort == 2087 or tcp.DstPort == 2096 or tcp.DstPort == 8443 or udp.DstPort == 443)";
 const WEB_AND_DISCORD_VOICE: &str = "outbound and !loopback and (tcp.DstPort == 80 or tcp.DstPort == 443 or tcp.DstPort == 2053 or tcp.DstPort == 2083 or tcp.DstPort == 2087 or tcp.DstPort == 2096 or tcp.DstPort == 8443 or udp.DstPort == 443 or (udp.DstPort >= 19294 and udp.DstPort <= 19344) or (udp.DstPort >= 50000 and udp.DstPort <= 65535))";
 const FLOW_WEB: &str = "outbound and ((protocol == 6 and (remotePort == 80 or remotePort == 443 or remotePort == 2053 or remotePort == 2083 or remotePort == 2087 or remotePort == 2096 or remotePort == 8443)) or (protocol == 17 and remotePort == 443))";

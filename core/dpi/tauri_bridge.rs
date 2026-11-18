@@ -294,6 +294,8 @@ pub fn dpi_strategy_select(
 /// Требует прав администратора и наличия WinDivert.dll рядом с драйвером.
 #[tauri::command]
 pub async fn dpi_engine_start(state: State<'_, StrategyState>) -> Result<String, String> {
+    // Не открывать активный WinDivert до завершения проверки безопасности.
+    umbranet_dpi::safety::active_start_guard().map_err(str::to_string)?;
     #[cfg(all(windows, target_arch = "x86_64"))]
     {
         let (id, strategy, dll) = {
@@ -326,7 +328,8 @@ pub async fn dpi_engine_start(state: State<'_, StrategyState>) -> Result<String,
             }
         };
 
-        // Домены, которые уже ловили RST, сразу попадают в обход.
+        // Диагностический список не расширяет явно выбранные цели. Этот путь
+        // заблокирован предохранителем до подключения проверенного снимка целей.
         let auto = AutoHostList::load(&umbranet_dpi::layout::AppPaths::new(&app_root()?).strategy_dir());
         {
             let mut inner = state.try_lock()?;

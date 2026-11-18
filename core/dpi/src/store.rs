@@ -2,6 +2,8 @@ use crate::capture::CapturePlan;
 use crate::catalog::Catalog;
 use crate::layout::AppPaths;
 use crate::selection::{atomic_write, Selection, PROTECTED_BROWSERS};
+use crate::session_plan::SessionPlan;
+use crate::strategy::Strategy;
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
@@ -125,6 +127,14 @@ impl Store {
             service_processes: self.selection.service_processes(),
             warning: self.warning.clone(),
         })
+    }
+
+    /// Неизменяемый снимок целей и стратегии; сеть не открывается.
+    pub fn prepare_session(&self, strategy: &Strategy) -> Result<SessionPlan, String> {
+        if let Some(warning) = &self.warning {
+            return Err(warning.clone());
+        }
+        SessionPlan::from_snapshot(self.selection.snapshot(&self.catalog, strategy)?)
     }
 
     /// Только снимок параметров для диагностики, без доменных имён в результатах.
