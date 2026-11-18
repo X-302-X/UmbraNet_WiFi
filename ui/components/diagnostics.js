@@ -34,7 +34,7 @@
   }
   function schedule() {
     clearTimeout(pollTimer);
-    if (state?.busy) pollTimer = setTimeout(refresh, 600);
+    if (state?.busy || !ready) pollTimer = setTimeout(refresh, ready ? 600 : 1500);
   }
   function render(view) {
     state = view;
@@ -55,7 +55,7 @@
       if (sequence >= appliedSequence) { appliedSequence = sequence; render(view); }
     } catch (error) {
       if (sequence >= appliedSequence) displayError(`Не удалось получить состояние: ${error}`);
-      if (state?.busy) pollTimer = setTimeout(refresh, 1500);
+      if (state?.busy || !ready) pollTimer = setTimeout(refresh, 1500);
     } finally {
       polling = false;
       controls();

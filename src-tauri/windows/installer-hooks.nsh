@@ -1,5 +1,15 @@
-; Use native separators: Windows NSIS must open this file while compiling Setup.
-!define UMBRA_INITIAL_STRATEGY "${__FILEDIR__}\..\..\strtegs_Uz\pass-through.json"
+; Resolve this include's directory now, not when the macro is expanded by Tauri.
+!define UMBRA_STRATEGY_SOURCE "${__FILEDIR__}\..\..\strtegs_Uz"
+; A bundled example is added only when a file by that name does not already exist.
+!macro UMBRA_INSTALL_STRATEGY ID NAME
+  IfFileExists "$INSTDIR\strtegs_Uz\${NAME}" umbra_strategy_${ID}_done 0
+    ClearErrors
+    SetOutPath "$INSTDIR\strtegs_Uz"
+    File /oname=${NAME} "${UMBRA_STRATEGY_SOURCE}\${NAME}"
+    IfErrors 0 umbra_strategy_${ID}_done
+    Abort "Cannot create bundled strategy ${NAME}."
+  umbra_strategy_${ID}_done:
+!macroend
 
 ; User strategies and logs are preserved during installation and updates.
 !macro NSIS_HOOK_POSTINSTALL
@@ -8,14 +18,10 @@
   CreateDirectory "$INSTDIR\logs"
   IfErrors 0 +2
     Abort "Cannot create application directories."
-  ; Extract the bundled example only if the user does not already have it.
-  IfFileExists "$INSTDIR\strtegs_Uz\pass-through.json" umbra_strategy_done 0
-    ClearErrors
-    SetOutPath "$INSTDIR\strtegs_Uz"
-    File /oname=pass-through.json "${UMBRA_INITIAL_STRATEGY}"
-    IfErrors 0 umbra_strategy_done
-    Abort "Cannot create the initial strategy file."
-  umbra_strategy_done:
+  !insertmacro UMBRA_INSTALL_STRATEGY "pass" "pass-through.json"
+  !insertmacro UMBRA_INSTALL_STRATEGY "voice" "discord-voice.json"
+  !insertmacro UMBRA_INSTALL_STRATEGY "quic" "quic-bypass.json"
+  !insertmacro UMBRA_INSTALL_STRATEGY "yt" "youtube-discord-ultra.json"
   SetOutPath "$INSTDIR"
 !macroend
 

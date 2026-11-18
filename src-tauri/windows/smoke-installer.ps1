@@ -23,7 +23,9 @@ function Require-File([string]$path) {
 Install-Test
 @('umbranet-wifi.exe', 'uninstall.exe', 'core/dpi/driver/WinDivert.dll',
   'core/dpi/driver/WinDivert64.sys', 'core/dpi/driver/LICENSE-WinDivert.txt',
-  'core/dpi/driver/NOTICE.txt', 'strtegs_Uz/pass-through.json') | ForEach-Object { Require-File $_ }
+  'core/dpi/driver/NOTICE.txt', 'strtegs_Uz/pass-through.json',
+  'strtegs_Uz/discord-voice.json', 'strtegs_Uz/quic-bypass.json',
+  'strtegs_Uz/youtube-discord-ultra.json') | ForEach-Object { Require-File $_ }
 if (Test-Path (Join-Path $install 'core/dpi/defaults/pass-through.json')) { throw 'Duplicate default strategy is present' }
 if (!(Test-Path (Join-Path $install 'logs') -PathType Container)) { throw 'Missing logs directory' }
 $expected = @{
@@ -37,18 +39,19 @@ foreach ($file in $expected.Keys) {
 # Reinstall without touching user-modified strategies or user-generated data.
 Set-Content -LiteralPath (Join-Path $install 'strtegs_Uz/pass-through.json') -Value 'user strategy' -NoNewline
 Set-Content -LiteralPath (Join-Path $install 'strtegs_Uz/custom.json') -Value 'user custom' -NoNewline
+Set-Content -LiteralPath (Join-Path $install 'strtegs_Uz/quic-bypass.json') -Value 'user quic strategy' -NoNewline
 Set-Content -LiteralPath (Join-Path $install 'core/dpi/selection.json') -Value 'user selection' -NoNewline
 Set-Content -LiteralPath (Join-Path $install 'logs/test.txt') -Value 'user log' -NoNewline
 Install-Test
 Require-Appearance
-foreach ($pair in @(@('strtegs_Uz/pass-through.json','user strategy'), @('strtegs_Uz/custom.json','user custom'), @('core/dpi/selection.json','user selection'), @('logs/test.txt','user log'))) {
+foreach ($pair in @(@('strtegs_Uz/pass-through.json','user strategy'), @('strtegs_Uz/custom.json','user custom'), @('strtegs_Uz/quic-bypass.json','user quic strategy'), @('core/dpi/selection.json','user selection'), @('logs/test.txt','user log'))) {
     if ((Get-Content -Raw -LiteralPath (Join-Path $install $pair[0])) -ne $pair[1]) { throw "Reinstall changed user file: $($pair[0])" }
 }
 # Uninstaller should remove app files but not the user's selections, strategies or logs.
 $uninstall = Join-Path $install 'uninstall.exe'
 $proc = Start-Process -FilePath $uninstall -ArgumentList "/S _?=$install" -Wait -PassThru
 if ($proc.ExitCode -ne 0) { throw "Uninstaller failed: $($proc.ExitCode)" }
-foreach ($path in @('strtegs_Uz/pass-through.json','strtegs_Uz/custom.json','core/dpi/selection.json','logs/test.txt')) {
+foreach ($path in @('strtegs_Uz/pass-through.json','strtegs_Uz/custom.json','strtegs_Uz/quic-bypass.json','core/dpi/selection.json','logs/test.txt')) {
     Require-File $path
 }
 if (Test-Path (Join-Path $install 'umbranet-wifi.exe')) { throw 'Uninstall did not remove the executable' }
@@ -60,7 +63,8 @@ Require-Appearance
 & (Join-Path $PSScriptRoot 'smoke-full-uninstall.ps1') -Install $install -AppearanceDir $appearanceDir
 # A fresh installation after full removal must not revive prior data.
 Install-Test
-Require-File 'strtegs_Uz/pass-through.json'
+@('strtegs_Uz/pass-through.json', 'strtegs_Uz/discord-voice.json', 'strtegs_Uz/quic-bypass.json', 'strtegs_Uz/youtube-discord-ultra.json') | ForEach-Object { Require-File $_ }
+if ((Get-Content -Raw -LiteralPath (Join-Path $install 'strtegs_Uz/quic-bypass.json')) -eq 'user quic strategy') { throw 'Fresh install revived modified QUIC strategy' }
 if (Test-Path -LiteralPath $appearanceDir) { throw 'Fresh install revived appearance data' }
 if (Test-Path -LiteralPath (Join-Path $install 'strtegs_Uz/custom.json')) { throw 'Fresh install revived user strategies' }
 if (Test-Path -LiteralPath (Join-Path $install 'core/dpi/selection.json')) { throw 'Fresh install revived selections' }
