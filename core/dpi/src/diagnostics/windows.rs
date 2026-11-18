@@ -1,6 +1,6 @@
 use crate::capture::{windivert::FlowListener, CapturePlan};
-use crate::diagnostics::session::{Backend, Observation, Observer};
-use crate::flow::{windows_process::current_process_info, wire::FlowEventKind};
+use crate::diagnostics::session::{Backend, Connection, Observation, Observer};
+use crate::flow::{tracker::Transport, windows_process::current_process_info, wire::FlowEventKind};
 use std::io;
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -19,10 +19,21 @@ impl Observer for FlowObserver {
         Ok(self.0.receive()?.map(|event| Observation {
             established: event.kind == FlowEventKind::Established,
             pid: event.pid,
+            connection: Some(Connection {
+                local: event.key.local(),
+                remote: event.key.remote(),
+                protocol: match event.key.protocol() {
+                    Transport::Tcp => "TCP",
+                    Transport::Udp => "UDP",
+                },
+            }),
         }))
     }
     fn shutdown(&self) -> io::Result<()> {
         self.0.shutdown()
+    }
+    fn close(&self) -> io::Result<()> {
+        self.0.close_checked()
     }
 }
 impl Backend for WindowsBackend {

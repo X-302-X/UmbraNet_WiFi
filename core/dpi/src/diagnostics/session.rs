@@ -1,7 +1,8 @@
 use crate::capture::CapturePlan;
 use serde::Serialize;
-use std::collections::BTreeSet;
+use std::collections::{BTreeSet, VecDeque};
 use std::io;
+use std::net::SocketAddr;
 use std::sync::{mpsc, Arc, Mutex};
 use std::thread;
 use std::time::Duration;
@@ -10,11 +11,37 @@ use std::time::Duration;
 pub struct Observation {
     pub established: bool,
     pub pid: u32,
+    pub connection: Option<Connection>,
 }
+
+#[derive(Debug, Clone, Copy)]
+pub struct Connection {
+    pub local: SocketAddr,
+    pub remote: SocketAddr,
+    pub protocol: &'static str,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct FlowLog {
+    pub sequence: u64,
+    pub observed_ms: u64,
+    pub established: bool,
+    pub pid: u32,
+    pub process: Option<String>,
+    pub selected_process: bool,
+    pub protocol: Option<String>,
+    pub local_ip: Option<String>,
+    pub local_port: Option<u16>,
+    pub remote_ip: Option<String>,
+    pub remote_port: Option<u16>,
+}
+const FLOW_LOG_LIMIT: usize = 200;
 
 pub trait Observer: Send + Sync + 'static {
     fn receive(&self) -> io::Result<Option<Observation>>;
     fn shutdown(&self) -> io::Result<()>;
+    /// Вызывается после завершения receive и shutdown, вне блокировки состояния.
+    fn close(&self) -> io::Result<()>;
 }
 pub trait Backend: Send + Sync + 'static {
     fn open(&self, plan: &CapturePlan) -> io::Result<Arc<dyn Observer>>;
@@ -46,6 +73,9 @@ pub struct View {
     pub ignored: u64,
     pub duration_seconds: u64,
     pub message: Option<String>,
+    pub session_id: u64,
+    pub events_dropped: u64,
+    pub events: VecDeque<FlowLog>,
 }
 impl Default for View {
     fn default() -> Self {
@@ -60,6 +90,9 @@ impl Default for View {
             ignored: 0,
             duration_seconds: 30,
             message: None,
+            session_id: 0,
+            events_dropped: 0,
+            events: VecDeque::new(),
         }
     }
 }
@@ -69,6 +102,7 @@ struct State {
     requested_stop: bool,
     source: Option<Arc<dyn Observer>>,
     shutdown_in_flight: bool,
+    closing: bool,
     pending_finish: Option<Option<String>>,
 }
 struct Shared {
@@ -90,6 +124,7 @@ impl Diagnostics {
                     requested_stop: false,
                     source: None,
                     shutdown_in_flight: false,
+                    closing: false,
                     pending_finish: None,
                 }),
             }),
@@ -122,10 +157,12 @@ impl Diagnostics {
             s.requested_stop = false;
             s.source = None;
             s.shutdown_in_flight = false;
+            s.closing = false;
             s.pending_finish = None;
             s.view = View {
                 phase: Phase::Starting,
                 busy: true,
+                session_id: s.session_id,
                 duration_seconds: self.duration.as_secs(),
                 ..View::default()
             };
@@ -135,7 +172,19 @@ impl Diagnostics {
         let duration = self.duration;
         if let Err(error) = thread::Builder::new()
             .name("umbra-flow-diagnostic".into())
-            .spawn(move || run(shared, session_id, backend, plan, selected, duration))
+            .spawn(move || {
+                let panic_shared = shared.clone();
+                let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                    run(shared, session_id, backend, plan, selected, duration)
+                }));
+                if result.is_err() {
+                    finish(
+                        &panic_shared,
+                        session_id,
+                        Some("Ошибка потока проверки (panic)".into()),
+                    );
+                }
+            })
         {
             let mut s = self
                 .shared
@@ -152,6 +201,16 @@ impl Diagnostics {
     pub fn stop(&self) -> Result<View, String> {
         request_stop(&self.shared, None)?;
         self.view()
+    }
+    /// Удаляет историю наблюдений из памяти, не сбрасывая счётчики и сессию.
+    pub fn clear_events(&self) -> Result<(), String> {
+        let mut state = self
+            .shared
+            .state
+            .lock()
+            .map_err(|_| "Состояние диагностики недоступно")?;
+        state.view.events.clear();
+        Ok(())
     }
 }
 impl Drop for Diagnostics {
@@ -195,10 +254,9 @@ fn request_stop(shared: &Arc<Shared>, expected_id: Option<u64>) -> Result<(), St
                     }
                     Err(_) => Some("Ошибка при остановке получения событий (panic)".to_string()),
                 };
+                let success = failure.is_none();
                 if let Ok(mut state) = worker_shared.state.lock() {
-                    if state.session_id != session_id {
-                        return;
-                    }
+                    if state.session_id != session_id { return; }
                     state.shutdown_in_flight = false;
                     if let Some(message) = failure {
                         state.view.phase = Phase::StopFailed;
@@ -207,10 +265,9 @@ fn request_stop(shared: &Arc<Shared>, expected_id: Option<u64>) -> Result<(), St
                             Some(worker_error) => format!("{message}; {worker_error}. Повторный запуск диагностики заблокирован."),
                             None => format!("{message}. Повторный запуск диагностики заблокирован."),
                         });
-                    } else if let Some(error) = state.pending_finish.take() {
-                        finalize(&mut state, error);
                     }
                 }
+                if success { close_if_ready(&worker_shared, session_id); }
             });
         if let Err(error) = spawned {
             let mut state = shared
@@ -232,15 +289,84 @@ fn request_stop(shared: &Arc<Shared>, expected_id: Option<u64>) -> Result<(), St
     Ok(())
 }
 
-fn finalize(state: &mut State, error: Option<String>) {
-    state.source = None;
-    state.view.busy = false;
-    if let Some(error) = error {
-        state.view.phase = Phase::Error;
-        state.view.message = Some(error);
-    } else {
-        state.view.phase = Phase::Finished;
-        state.view.message = None;
+// Called by worker/shutdown threads only; close and destruction may block.
+fn close_if_ready(shared: &Arc<Shared>, session_id: u64) {
+    let (source, worker_error) = {
+        let Ok(mut state) = shared.state.lock() else {
+            return;
+        };
+        if state.session_id != session_id
+            || state.shutdown_in_flight
+            || state.closing
+            || state.view.phase == Phase::StopFailed
+            || state.pending_finish.is_none()
+        {
+            return;
+        }
+        let worker_error = state.pending_finish.take().unwrap();
+        let Some(source) = state.source.clone() else {
+            state.view.busy = false;
+            state.view.phase = if worker_error.is_some() {
+                Phase::Error
+            } else {
+                Phase::Finished
+            };
+            state.view.message = worker_error;
+            return;
+        };
+        // No new shutdown may begin after close has been reserved.
+        state.requested_stop = true;
+        state.closing = true;
+        state.view.phase = Phase::Stopping;
+        (source, worker_error)
+    };
+    let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| source.close()));
+    drop(source);
+    let failure = match result {
+        Ok(Ok(())) => None,
+        Ok(Err(error)) => Some(format!("Не удалось закрыть WinDivert: {error}")),
+        Err(_) => Some("Ошибка закрытия WinDivert (panic)".to_string()),
+    };
+    if let Some(failure) = failure {
+        if let Ok(mut state) = shared.state.lock() {
+            if state.session_id != session_id {
+                return;
+            }
+            state.closing = false;
+            state.view.phase = Phase::StopFailed;
+            state.view.message = Some(match worker_error {
+                Some(error) => {
+                    format!("{failure}; {error}. Повторный запуск диагностики заблокирован.")
+                }
+                None => format!("{failure}. Повторный запуск диагностики заблокирован."),
+            });
+        }
+        return;
+    }
+    // Drop the last state-owned reference outside the lock, and keep busy until
+    // its destructor has returned; CloseHandle success does not prove driver unload.
+    let owned = {
+        let Ok(mut state) = shared.state.lock() else {
+            return;
+        };
+        if state.session_id != session_id {
+            return;
+        }
+        state.source.take()
+    };
+    drop(owned);
+    if let Ok(mut state) = shared.state.lock() {
+        if state.session_id != session_id {
+            return;
+        }
+        state.closing = false;
+        state.view.busy = false;
+        state.view.phase = if worker_error.is_some() {
+            Phase::Error
+        } else {
+            Phase::Finished
+        };
+        state.view.message = worker_error;
     }
 }
 
@@ -249,19 +375,19 @@ fn finish(shared: &Arc<Shared>, session_id: u64, error: Option<String>) {
         if state.session_id != session_id {
             return;
         }
-        if state.shutdown_in_flight {
-            state.pending_finish = Some(error);
-        } else if state.view.phase == Phase::StopFailed {
-            // Не скрывать отказ shutdown и не терять последующую ошибку receive.
+        if state.view.phase == Phase::StopFailed {
             if let Some(worker_error) = error.as_deref() {
                 let previous = state.view.message.as_deref().unwrap_or("Ошибка остановки");
                 state.view.message = Some(format!("{previous} {worker_error}"));
             }
             state.pending_finish = Some(error);
-        } else {
-            finalize(&mut state, error);
+            return;
         }
+        state.pending_finish = Some(error);
+    } else {
+        return;
     }
+    close_if_ready(shared, session_id);
 }
 
 fn run(
@@ -304,10 +430,10 @@ fn run(
     };
     let cancelled = match shared.state.lock() {
         Ok(mut s) if s.session_id == session_id => {
+            s.source = Some(source.clone());
             if s.requested_stop {
                 true
             } else {
-                s.source = Some(source.clone());
                 s.view.phase = Phase::Running;
                 false
             }
@@ -352,6 +478,38 @@ fn run(
         if let Ok(mut s) = shared.state.lock() {
             if s.session_id != session_id || s.requested_stop {
                 break;
+            }
+            if let Some(e) = event {
+                let name = process.as_ref().and_then(|p| p.as_ref().ok()).cloned();
+                let selected_process = name
+                    .as_ref()
+                    .is_some_and(|n| selected.contains(&n.to_ascii_lowercase()));
+                let sequence = s
+                    .view
+                    .established
+                    .saturating_add(s.view.deleted)
+                    .saturating_add(1);
+                let observed_ms = std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .map(|d| u64::try_from(d.as_millis()).unwrap_or(u64::MAX))
+                    .unwrap_or(0);
+                if s.view.events.len() == FLOW_LOG_LIMIT {
+                    s.view.events.pop_front();
+                    s.view.events_dropped = s.view.events_dropped.saturating_add(1);
+                }
+                s.view.events.push_back(FlowLog {
+                    sequence,
+                    observed_ms,
+                    established: e.established,
+                    pid: e.pid,
+                    process: name,
+                    selected_process,
+                    protocol: e.connection.map(|c| c.protocol.to_string()),
+                    local_ip: e.connection.map(|c| c.local.ip().to_string()),
+                    local_port: e.connection.map(|c| c.local.port()),
+                    remote_ip: e.connection.map(|c| c.remote.ip().to_string()),
+                    remote_port: e.connection.map(|c| c.remote.port()),
+                });
             }
             match event {
                 Some(e) if e.established => {

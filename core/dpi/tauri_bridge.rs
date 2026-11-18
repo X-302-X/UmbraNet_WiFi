@@ -71,6 +71,11 @@ pub fn dpi_diagnostic_status(
 }
 
 #[tauri::command]
+pub fn dpi_diagnostic_clear_events(state: State<'_, DiagnosticState>) -> Result<(), String> {
+    state.0.clear_events()
+}
+
+#[tauri::command]
 pub async fn dpi_diagnostic_start(
     dpi: State<'_, DpiState>,
     diagnostic: State<'_, DiagnosticState>,

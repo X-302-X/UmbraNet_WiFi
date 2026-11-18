@@ -7,6 +7,7 @@ use std::io;
 use std::os::windows::ffi::OsStrExt;
 use std::path::Path;
 use std::ptr;
+use std::sync::Mutex;
 
 const SNIFF_RECV_ONLY: u64 = 0x0001 | 0x0004;
 const NETWORK_LAYER: i32 = 0;
@@ -86,7 +87,21 @@ pub struct Sniffer {
     recv: RecvFn,
     shutdown_fn: ShutdownFn,
     close: CloseFn,
+    io_state: Mutex<IoState>,
     _library: Library,
+}
+
+#[derive(Default)]
+struct IoState {
+    in_flight: usize,
+    close_attempted: bool,
+}
+struct IoGuard<'a>(&'a Mutex<IoState>);
+impl Drop for IoGuard<'_> {
+    fn drop(&mut self) {
+        let mut state = self.0.lock().unwrap_or_else(|p| p.into_inner());
+        state.in_flight -= 1;
+    }
 }
 
 // Shutdown(RECV) запрещает новую очередь, но уже поставленные события ещё
@@ -125,12 +140,55 @@ impl Sniffer {
             recv,
             shutdown_fn,
             close,
+            io_state: Mutex::new(IoState::default()),
             _library: library,
         })
     }
 
+    fn begin_io(&self) -> io::Result<IoGuard<'_>> {
+        let mut state = self
+            .io_state
+            .lock()
+            .map_err(|_| io::Error::other("Состояние WinDivert недоступно"))?;
+        if state.close_attempted {
+            return Err(io::Error::other("WinDivert уже закрывается или закрыт"));
+        }
+        state.in_flight = state
+            .in_flight
+            .checked_add(1)
+            .ok_or_else(|| io::Error::other("Слишком много операций WinDivert"))?;
+        drop(state);
+        Ok(IoGuard(&self.io_state))
+    }
+
+    /// Однократная попытка закрытия; не допускается при выполняющемся I/O.
+    /// Ошибка означает неизвестное состояние handle: повтор автоматически не делается.
+    pub fn close_checked(&self) -> io::Result<()> {
+        {
+            let mut state = self
+                .io_state
+                .lock()
+                .map_err(|_| io::Error::other("Состояние WinDivert недоступно"))?;
+            if state.close_attempted {
+                return Err(io::Error::other("Закрытие WinDivert уже запрашивалось"));
+            }
+            if state.in_flight != 0 {
+                return Err(io::Error::new(
+                    io::ErrorKind::WouldBlock,
+                    "Операции WinDivert ещё выполняются",
+                ));
+            }
+            state.close_attempted = true;
+        }
+        if unsafe { (self.close)(self.handle) } == 0 {
+            return Err(io::Error::last_os_error());
+        }
+        Ok(())
+    }
+
     /// Блокируется до получения копии пакета или shutdown. Буфер не записывается на диск.
     pub fn receive(&self) -> io::Result<Vec<u8>> {
+        let _operation = self.begin_io()?;
         let mut packet = vec![0u8; MAX_PACKET];
         let mut length = 0u32;
         let result = unsafe {
@@ -157,6 +215,7 @@ impl Sniffer {
 
     /// Можно вызвать из другого потока для завершения ожидающего receive.
     pub fn shutdown(&self) -> io::Result<()> {
+        let _operation = self.begin_io()?;
         if unsafe { (self.shutdown_fn)(self.handle, SHUTDOWN_RECV) } == 0 {
             return Err(io::Error::last_os_error());
         }
@@ -165,8 +224,12 @@ impl Sniffer {
 }
 impl Drop for Sniffer {
     fn drop(&mut self) {
-        unsafe {
-            (self.close)(self.handle);
+        let state = self.io_state.get_mut().unwrap_or_else(|p| p.into_inner());
+        if !state.close_attempted {
+            state.close_attempted = true;
+            unsafe {
+                (self.close)(self.handle);
+            }
         }
     }
 }
@@ -185,6 +248,7 @@ impl FlowListener {
     }
     /// Неизвестные либо неподдерживаемые события возвращаются как None.
     pub fn receive(&self) -> io::Result<Option<FlowEvent>> {
+        let _operation = self.inner.begin_io()?;
         let mut raw = RawAddress::default();
         let ok = unsafe {
             (self.inner.recv)(
@@ -202,6 +266,9 @@ impl FlowListener {
     }
     pub fn shutdown(&self) -> io::Result<()> {
         self.inner.shutdown()
+    }
+    pub fn close_checked(&self) -> io::Result<()> {
+        self.inner.close_checked()
     }
 }
 

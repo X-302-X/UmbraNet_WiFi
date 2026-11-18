@@ -17,6 +17,12 @@ pub struct FlowKey {
 }
 
 impl FlowKey {
+    pub fn local(&self) -> SocketAddr {
+        self.local
+    }
+    pub fn remote(&self) -> SocketAddr {
+        self.remote
+    }
     pub fn protocol(&self) -> Transport {
         self.protocol
     }

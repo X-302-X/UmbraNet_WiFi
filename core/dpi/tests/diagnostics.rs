@@ -51,6 +51,9 @@ impl Observer for FakeObserver {
         self.changed.notify_all();
         Ok(())
     }
+    fn close(&self) -> io::Result<()> {
+        Ok(())
+    }
 }
 struct FakeBackend {
     source: Arc<FakeObserver>,
@@ -97,7 +100,7 @@ fn backend(source: &Arc<FakeObserver>, fail: bool) -> Arc<dyn Backend> {
 }
 
 #[test]
-fn explicit_start_counts_without_exposing_pid_or_names_and_stops() {
+fn explicit_start_counts_and_records_observations_and_stops() {
     let source = Arc::new(FakeObserver::default());
     let d = Diagnostics::new(Duration::from_secs(2));
     assert_eq!(d.view().unwrap().phase, Phase::Idle);
@@ -114,18 +117,22 @@ fn explicit_start_counts_without_exposing_pid_or_names_and_stops() {
     source.send(Some(Observation {
         established: true,
         pid: 42,
+        connection: None,
     }));
     source.send(Some(Observation {
         established: true,
         pid: 43,
+        connection: None,
     }));
     source.send(Some(Observation {
         established: true,
         pid: 44,
+        connection: None,
     }));
     source.send(Some(Observation {
         established: false,
         pid: 42,
+        connection: None,
     }));
     source.send(None);
     wait_for(|| d.view().unwrap().ignored == 1);
@@ -141,9 +148,9 @@ fn explicit_start_counts_without_exposing_pid_or_names_and_stops() {
         (3, 1, 2, 1, 1)
     );
     let json = serde_json::to_string(&view).unwrap();
-    assert!(!json.contains("discord.exe"));
-    assert!(!json.contains("other.exe"));
-    assert!(!json.contains("pid"));
+    assert!(json.contains("discord.exe"));
+    assert!(json.contains("other.exe"));
+    assert_eq!(view.events.len(), 4);
     d.stop().unwrap();
     wait_for(|| !d.view().unwrap().busy);
     assert_eq!(d.view().unwrap().phase, Phase::Finished);
@@ -260,6 +267,9 @@ impl Observer for DelayedShutdown {
         } else {
             Ok(())
         }
+    }
+    fn close(&self) -> io::Result<()> {
+        self.source.close()
     }
 }
 struct DelayedBackend(Arc<DelayedShutdown>);
@@ -386,6 +396,9 @@ impl Observer for UnexpectedReceiveError {
         } else {
             Ok(())
         }
+    }
+    fn close(&self) -> io::Result<()> {
+        Ok(())
     }
 }
 struct UnexpectedBackend(Arc<UnexpectedReceiveError>);
@@ -524,4 +537,212 @@ fn cancelled_open_failure_is_not_reported_as_success() {
     let view = d.view().unwrap();
     assert_eq!(view.phase, Phase::Error);
     assert!(view.message.unwrap().contains("open failed after cancel"));
+}
+
+#[test]
+fn observations_are_bounded_and_clearable_with_connection_metadata() {
+    use umbranet_dpi::diagnostics::session::Connection;
+    let source = Arc::new(FakeObserver::default());
+    let d = Diagnostics::new(Duration::from_secs(5));
+    d.start(
+        backend(&source, false),
+        plan(),
+        BTreeSet::from(["discord.exe".into()]),
+    )
+    .unwrap();
+    wait_for(|| d.view().unwrap().phase == Phase::Running);
+    for _ in 0..230 {
+        source.send(Some(Observation {
+            established: true,
+            pid: 42,
+            connection: Some(Connection {
+                local: "192.0.2.1:50001".parse().unwrap(),
+                remote: "198.51.100.2:443".parse().unwrap(),
+                protocol: "UDP",
+            }),
+        }));
+    }
+    wait_for(|| d.view().unwrap().established == 230);
+    let v = d.view().unwrap();
+    assert_eq!(v.events.len(), 200);
+    assert_eq!(v.events_dropped, 30);
+    assert_eq!(v.events.front().unwrap().sequence, 31);
+    let event = v.events.back().unwrap();
+    assert_eq!(event.process.as_deref(), Some("discord.exe"));
+    assert!(event.selected_process);
+    assert_eq!(event.local_ip.as_deref(), Some("192.0.2.1"));
+    assert_eq!(event.remote_ip.as_deref(), Some("198.51.100.2"));
+    assert_eq!(event.remote_port, Some(443));
+    d.clear_events().unwrap();
+    assert!(d.view().unwrap().events.is_empty());
+    source.send(Some(Observation {
+        established: true,
+        pid: 43,
+        connection: None,
+    }));
+    wait_for(|| d.view().unwrap().established == 231);
+    assert_eq!(d.view().unwrap().events.front().unwrap().sequence, 231);
+    d.stop().unwrap();
+    wait_for(|| !d.view().unwrap().busy);
+}
+
+struct CloseProbe {
+    source: FakeObserver,
+    close_state: Mutex<(usize, bool)>,
+    changed: Condvar,
+    fail: bool,
+    panic: bool,
+}
+impl Observer for CloseProbe {
+    fn receive(&self) -> io::Result<Option<Observation>> {
+        self.source.receive()
+    }
+    fn shutdown(&self) -> io::Result<()> {
+        self.source.shutdown()
+    }
+    fn close(&self) -> io::Result<()> {
+        let mut state = self.close_state.lock().unwrap();
+        state.0 += 1;
+        self.changed.notify_all();
+        while !state.1 {
+            state = self.changed.wait(state).unwrap();
+        }
+        drop(state);
+        if self.panic {
+            panic!("close panic");
+        }
+        if self.fail {
+            Err(io::Error::other("close failed"))
+        } else {
+            Ok(())
+        }
+    }
+}
+struct ProbeBackend(Arc<CloseProbe>);
+impl Backend for ProbeBackend {
+    fn open(&self, _: &CapturePlan) -> io::Result<Arc<dyn Observer>> {
+        Ok(self.0.clone())
+    }
+    fn process_name(&self, _: u32) -> io::Result<String> {
+        Ok("test.exe".into())
+    }
+}
+fn probe(fail: bool, panic: bool) -> Arc<CloseProbe> {
+    Arc::new(CloseProbe {
+        source: FakeObserver::default(),
+        close_state: Mutex::new((0, false)),
+        changed: Condvar::new(),
+        fail,
+        panic,
+    })
+}
+fn allow_close(p: &CloseProbe) {
+    let mut s = p.close_state.lock().unwrap();
+    s.1 = true;
+    p.changed.notify_all();
+}
+#[test]
+fn stop_waits_for_checked_close_without_blocking_status_and_rejects_restart() {
+    let p = probe(false, false);
+    let d = Diagnostics::new(Duration::from_secs(5));
+    d.start(Arc::new(ProbeBackend(p.clone())), plan(), BTreeSet::new())
+        .unwrap();
+    wait_for(|| d.view().unwrap().phase == Phase::Running);
+    d.stop().unwrap();
+    wait_for(|| p.close_state.lock().unwrap().0 == 1);
+    assert_eq!(d.view().unwrap().phase, Phase::Stopping);
+    assert!(d.view().unwrap().busy);
+    assert!(d
+        .start(Arc::new(ProbeBackend(p.clone())), plan(), BTreeSet::new())
+        .is_err());
+    allow_close(&p);
+    wait_for(|| !d.view().unwrap().busy);
+    assert_eq!(d.view().unwrap().phase, Phase::Finished);
+    assert_eq!(p.close_state.lock().unwrap().0, 1);
+}
+#[test]
+fn failed_or_panicking_close_is_visible_and_prevents_restart() {
+    for (fail, panic) in [(true, false), (false, true)] {
+        let p = probe(fail, panic);
+        let d = Diagnostics::new(Duration::from_secs(5));
+        allow_close(&p);
+        d.start(Arc::new(ProbeBackend(p.clone())), plan(), BTreeSet::new())
+            .unwrap();
+        wait_for(|| d.view().unwrap().phase == Phase::Running);
+        d.stop().unwrap();
+        wait_for(|| d.view().unwrap().phase == Phase::StopFailed);
+        assert!(d.view().unwrap().busy);
+        assert!(d.view().unwrap().message.unwrap().contains("закры"));
+        assert!(d
+            .start(Arc::new(ProbeBackend(p.clone())), plan(), BTreeSet::new())
+            .is_err());
+        d.stop().unwrap();
+        assert_eq!(p.close_state.lock().unwrap().0, 1);
+    }
+}
+struct SlowProbeBackend {
+    p: Arc<CloseProbe>,
+    gate: Arc<(Mutex<(bool, bool)>, Condvar)>,
+}
+impl Backend for SlowProbeBackend {
+    fn open(&self, _: &CapturePlan) -> io::Result<Arc<dyn Observer>> {
+        let (lock, cv) = &*self.gate;
+        let mut s = lock.lock().unwrap();
+        s.0 = true;
+        cv.notify_all();
+        while !s.1 {
+            s = cv.wait(s).unwrap();
+        }
+        Ok(self.p.clone())
+    }
+    fn process_name(&self, _: u32) -> io::Result<String> {
+        Ok("test.exe".into())
+    }
+}
+#[test]
+fn cancelled_open_requires_checked_close_before_finished() {
+    let p = probe(false, false);
+    let gate = Arc::new((Mutex::new((false, false)), Condvar::new()));
+    let d = Diagnostics::new(Duration::from_secs(5));
+    d.start(
+        Arc::new(SlowProbeBackend {
+            p: p.clone(),
+            gate: gate.clone(),
+        }),
+        plan(),
+        BTreeSet::new(),
+    )
+    .unwrap();
+    wait_for(|| gate.0.lock().unwrap().0);
+    d.stop().unwrap();
+    {
+        let mut s = gate.0.lock().unwrap();
+        s.1 = true;
+        gate.1.notify_all();
+    }
+    wait_for(|| p.close_state.lock().unwrap().0 == 1);
+    assert!(d.view().unwrap().busy);
+    allow_close(&p);
+    wait_for(|| !d.view().unwrap().busy);
+    assert_eq!(d.view().unwrap().phase, Phase::Finished);
+}
+
+#[test]
+fn failed_shutdown_does_not_claim_close() {
+    let p = probe(false, false);
+    p.source.state.lock().unwrap().fail_stop = true;
+    let d = Diagnostics::new(Duration::from_secs(5));
+    d.start(Arc::new(ProbeBackend(p.clone())), plan(), BTreeSet::new())
+        .unwrap();
+    wait_for(|| d.view().unwrap().phase == Phase::Running);
+    d.stop().unwrap();
+    wait_for(|| d.view().unwrap().phase == Phase::StopFailed);
+    {
+        let mut s = p.source.state.lock().unwrap();
+        s.stopped = true;
+    }
+    p.source.changed.notify_all();
+    wait_for(|| Arc::strong_count(&p) <= 2);
+    assert_eq!(p.close_state.lock().unwrap().0, 0);
+    assert!(d.view().unwrap().busy);
 }
