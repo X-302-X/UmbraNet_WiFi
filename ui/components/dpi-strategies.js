@@ -4,8 +4,6 @@
   const list = document.querySelector("#strategy-list");
   const count = document.querySelector("#strategy-count");
   const message = document.querySelector("#strategy-message");
-  const startButton = document.querySelector("#engine-start");
-  const stopButton = document.querySelector("#engine-stop");
   const stateLabel = document.querySelector("#engine-state");
   const autoList = document.querySelector("#auto-list");
   const autoCount = document.querySelector("#auto-count");
@@ -88,12 +86,9 @@
       autoList.append(row);
     }
     const running = Boolean(view?.running);
-    startButton.disabled = busy || running || !view?.selected;
-    stopButton.disabled = busy || !running;
     stateLabel.textContent = running
       ? `Обход включён: ${view.running_id || "—"}`
       : "Движок выключен";
-    startButton.classList.toggle("action-accent", !running);
   }
 
   // Пока движок включён, раз в 2 секунды забираем статус: так ошибки
@@ -128,7 +123,6 @@
   async function select(id) {
     if (busy || id === view?.selected) return;
     busy = true;
-    startButton.disabled = true;
     try {
       view = parse(await invoke("dpi_strategy_select", { id }));
       status("");
@@ -137,30 +131,6 @@
     } finally {
       busy = false;
       render();
-    }
-  }
-
-  async function toggle(start) {
-    if (busy) return;
-    busy = true;
-    status("");
-    window.umbraJournal?.add("system", start ? "Пользователь запросил запуск DPI." : "Пользователь нажал «Стоп» DPI; запрошена остановка.");
-    render();
-    try {
-      view = parse(await invoke(start ? "dpi_engine_start" : "dpi_engine_stop"));
-      if (view?.last_error) {
-        status(view.last_error, true);
-        window.umbraJournal?.add("error", `DPI: ${view.last_error}`);
-      } else {
-        window.umbraJournal?.add("system", start ? "Команда запуска DPI вернулась; состояние смотрите в интерфейсе." : "Команда остановки DPI вернулась; подтверждение очистки ещё не реализовано.");
-      }
-    } catch (error) {
-      window.umbraJournal?.add("error", `DPI: ${String(error)}`);
-      status(String(error), true);
-    } finally {
-      busy = false;
-      render();
-      schedulePoll();
     }
   }
 
@@ -178,9 +148,6 @@
       render();
     }
   });
-
-  startButton.addEventListener("click", () => toggle(true));
-  stopButton.addEventListener("click", () => toggle(false));
 
   refresh();
 })();

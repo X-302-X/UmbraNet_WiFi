@@ -26,9 +26,11 @@ fn main() {
         .invoke_handler(tauri::generate_handler![
             dpi_bridge::dpi_get,
             dpi_bridge::dpi_apply,
+            dpi_bridge::dpi_control_status,
             dpi_bridge::dpi_diagnostic_status,
             dpi_bridge::dpi_diagnostic_clear_events,
             dpi_bridge::dpi_diagnostic_start,
+            dpi_bridge::dpi_tcp_diagnostic_start,
             dpi_bridge::dpi_diagnostic_stop,
             dpi_bridge::dpi_strategy_list,
             dpi_bridge::dpi_strategy_select,

@@ -136,6 +136,7 @@ input, textarea, [contenteditable="true"] { user-select: text; -webkit-user-sele
 
 .action-notice { position: absolute; z-index: 20; top: 67px; right: 18px; max-width: calc(100% - 36px); padding: 9px 13px; border: 1px solid var(--border); border-radius: 9px; background: #191625; color: #fff; font-size: calc(12px * var(--font-scale, 1)); box-shadow: 0 5px 18px #0008; pointer-events: none; }
 .action-notice[hidden] { display: none; }
+.action-notice.is-error { color: #ff8590; border-color: #9e3544; }
 .primary, .action-accent, .orb > div, .orb > div > div, .nav-drag-ghost, #navigation .nav-item.dragging,
 .metric:hover, .service:hover, #routing .catalog-row, #routing .catalog-group h4 { border-color: var(--border); }
 @keyframes hero-breathe { from, to { border-color: var(--border); } }

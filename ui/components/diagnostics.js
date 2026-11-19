@@ -3,6 +3,10 @@
 (() => {
   const invoke = window.__TAURI_INTERNALS__?.invoke;
   const start = document.querySelector("#diagnostic-start");
+  const tcpStart = document.querySelector("#diagnostic-tcp-start");
+  const flowStats = document.querySelector("#diagnostic-flow-stats");
+  const tcpResults = document.querySelector("#diagnostic-tcp-results");
+  const tcpReport = document.querySelector("#diagnostic-tcp-report");
   const stop = document.querySelector("#diagnostic-stop");
   const phase = document.querySelector("#diagnostic-state");
   const message = document.querySelector("#diagnostic-message");
@@ -31,11 +35,21 @@
   }
   function controls() {
     start.disabled = !ready || submitting || Boolean(state?.busy);
+    tcpStart.disabled = start.disabled;
     stop.disabled = !ready || submitting || !state?.busy || ["stopping", "stop_failed"].includes(state?.phase);
   }
   function schedule() {
     clearTimeout(pollTimer);
     if (state?.busy || !ready) pollTimer = setTimeout(refresh, ready ? 600 : 1500);
+  }
+  function tcpSummary(view) {
+    function matrix(label, m = {}) {
+      return `${label}: флаг=1/сумма верна ${m.flag_set_valid ?? 0}; флаг=1/сумма неверна ${m.flag_set_invalid ?? 0}; флаг=0/сумма верна ${m.flag_unset_valid ?? 0}; флаг=0/сумма неверна ${m.flag_unset_invalid ?? 0}`;
+    }
+    function direction(label, d = {}) {
+      return [label, `Всего ${d.total ?? 0}; IPv4 ${d.ipv4 ?? 0}; IPv6 ${d.ipv6 ?? 0}; больше 1500 байт ${d.over_1500_bytes ?? 0}; не разобрано ${d.unsupported ?? 0}`, matrix("TCP", d.tcp_checksum), matrix("IPv4 заголовок (только IPv4)", d.ipv4_checksum)].join("\n");
+    }
+    return ["UmbraNet — пассивная TCP-проверка", `Состояние: ${labels[view.phase] || "неизвестно"}; лимит ${view.duration_seconds ?? 30} с.`, "Охват: все приложения на web-портах, не только выбранные цели.", direction("Исходящие", view.tcp_stats?.outbound), direction("Входящие", view.tcp_stats?.inbound), "Размер >1500, флаги и суммы не доказывают наличие или отсутствие LSO; потери копий не измеряются."].join("\n\n");
   }
   function render(view) {
     const previous = state;
@@ -52,10 +66,16 @@
       window.umbraJournal?.add("error", view.message);
     }
     if (!terminal) window.umbraJournal?.addFlowView(view);
+    if (terminal && view.phase !== previous?.phase) window.dispatchEvent(new Event("umbra-diagnostic-finished"));
     state = view;
+    if (view.busy !== previous?.busy) window.dispatchEvent(new Event("umbra-diagnostic-busy"));
     phase.textContent = labels[view.phase] || "Неизвестное состояние";
     phase.classList.toggle("is-error", ["error", "stop_failed"].includes(view.phase));
     for (const [key, node] of Object.entries(counts)) node.textContent = String(view[key] ?? 0);
+    const tcpMode = view.kind === "tcp_metadata";
+    flowStats.hidden = tcpMode;
+    tcpResults.hidden = !tcpMode;
+    if (tcpMode) tcpReport.value = tcpSummary(view);
     displayError(view.message);
     controls();
     schedule();
@@ -90,7 +110,8 @@
   async function command(name) {
     if (!ready || submitting) return;
     submitting = true;
-    window.umbraJournal?.add("system", name === "dpi_diagnostic_start" ? "Пользователь запустил пассивную проверку." : "Пользователь запросил остановку пассивной проверки.");
+    const action = name === "dpi_tcp_diagnostic_start" ? "Пользователь запустил пассивную TCP-проверку." : name === "dpi_diagnostic_start" ? "Пользователь запустил пассивную FLOW-проверку." : "Пользователь запросил остановку пассивной проверки.";
+    window.umbraJournal?.add("system", action);
     controls();
     const sequence = ++requestSequence;
     appliedSequence = sequence;
@@ -113,6 +134,7 @@
       displayError(failure);
     }
   }
+  window.umbraDiagnosticBusy = () => !state || Boolean(state.busy);
   window.umbraDiagnosticClear = async () => {
     const sequence = ++requestSequence;
     appliedSequence = sequence;
@@ -120,6 +142,11 @@
     if (state) state.events = [];
   };
   start.addEventListener("click", () => command("dpi_diagnostic_start"));
+  tcpStart.addEventListener("click", () => {
+    if (!ready || submitting || state?.busy) return;
+    if (!window.confirm("Пассивно прочитать копии TCP-пакетов на web-портах всех приложений в течение 30 секунд? Содержимое и адреса не сохраняются. Может запуститься общий драйвер WinDivert.")) return;
+    command("dpi_tcp_diagnostic_start");
+  });
   stop.addEventListener("click", () => command("dpi_diagnostic_stop"));
   if (typeof invoke !== "function") {
     phase.textContent = "Доступна только в приложении";

@@ -20,14 +20,29 @@
   let lastSequence = 0;
   let skipNextView = false;
 
-  function add(kind, text, details = null, timestamp = Date.now()) {
-    if (!recording) return;
+  function append(kind, text, details = null, timestamp = Date.now()) {
     if (entries.length === LIMIT) { entries.shift(); dropped++; }
     entries.push({kind, text: String(text), details, timestamp});
     if (!renderPending) {
       renderPending = true;
       requestAnimationFrame(() => { renderPending = false; render(); });
     }
+  }
+  function add(kind, text, details = null, timestamp = Date.now()) {
+    if (recording) append(kind, text, details, timestamp);
+  }
+  // Действие Stop и ошибки его выполнения видны даже при ручной паузе журнала.
+  function addRequired(kind, text) { append(kind, text); }
+  function startForDpi() {
+    recording = true;
+    append("system", "Запись журнала включена после запуска DPI.");
+    render();
+  }
+  // Вызывать только после подтверждённой остановки движка и обработки ошибок.
+  function stopAfterDpi() {
+    append("system", "Запись журнала остановлена после остановки DPI.");
+    recording = false;
+    render();
   }
   function processName(name, redacted) {
     if (!name) return "не определён";
@@ -100,7 +115,7 @@
       add("flow", "", event, event.observed_ms);
     }
   }
-  window.umbraJournal = { add, addFlowView };
+  window.umbraJournal = { add, addRequired, addFlowView, startForDpi, stopAfterDpi };
   search.addEventListener("input", render);
   filter.addEventListener("change", render);
   pauseButton.addEventListener("click", () => {
