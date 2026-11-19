@@ -1,5 +1,5 @@
 use std::path::PathBuf;
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex};
 use tauri::State;
 #[cfg(all(windows, target_arch = "x86_64"))]
 use umbranet_dpi::layout::AppPaths;
@@ -54,13 +54,46 @@ pub async fn dpi_apply(
     }
 }
 
-pub struct DiagnosticState(umbranet_dpi::diagnostics::session::Diagnostics);
+#[derive(Clone)]
+struct StopView {
+    phase: &'static str, // idle, stopping, complete, failed
+    message: Option<String>,
+    owned_closed: bool,
+    service_status: Option<&'static str>,
+}
+impl StopView {
+    fn json(&self) -> serde_json::Value {
+        serde_json::json!({"phase":self.phase, "message":self.message,
+            "owned_closed":self.owned_closed, "service_status":self.service_status})
+    }
+}
+pub struct DiagnosticState(
+    Arc<umbranet_dpi::diagnostics::session::Diagnostics>,
+    Arc<Mutex<StopView>>,
+);
 impl DiagnosticState {
     pub fn new() -> Self {
-        Self(umbranet_dpi::diagnostics::session::Diagnostics::new(
-            std::time::Duration::from_secs(30),
-        ))
+        Self(
+            Arc::new(umbranet_dpi::diagnostics::session::Diagnostics::new(
+                std::time::Duration::from_secs(30),
+            )),
+            Arc::new(Mutex::new(StopView {
+                phase: "idle",
+                message: None,
+                owned_closed: false,
+                service_status: None,
+            })),
+        )
     }
+}
+
+#[tauri::command]
+pub fn dpi_control_status(state: State<'_, DiagnosticState>) -> Result<serde_json::Value, String> {
+    state
+        .1
+        .lock()
+        .map(|v| v.json())
+        .map_err(|_| "Состояние общей остановки недоступно".to_string())
 }
 
 #[tauri::command]
@@ -82,8 +115,15 @@ pub async fn dpi_diagnostic_start(
 ) -> Result<umbranet_dpi::diagnostics::session::View, String> {
     #[cfg(all(windows, target_arch = "x86_64"))]
     {
-        use std::sync::Arc;
         use umbranet_dpi::diagnostics::windows::WindowsBackend;
+        // Start is serialized against the stop reservation.
+        let gate = diagnostic
+            .1
+            .lock()
+            .map_err(|_| "Состояние общей остановки недоступно".to_string())?;
+        if matches!(gate.phase, "stopping" | "failed") {
+            return Err("Общая остановка не подтверждена; диагностика заблокирована".into());
+        }
         let (plan, selected) = {
             let locked = dpi
                 .0
@@ -106,6 +146,46 @@ pub async fn dpi_diagnostic_start(
     }
 }
 
+/// Отдельный пассивный NETWORK SNIFF: включает трафик других приложений на
+/// web-портах, не применяет стратегии и не доказывает отсутствие LSO.
+#[tauri::command]
+pub async fn dpi_tcp_diagnostic_start(
+    diagnostic: State<'_, DiagnosticState>,
+    strategy: State<'_, StrategyState>,
+) -> Result<umbranet_dpi::diagnostics::session::View, String> {
+    #[cfg(all(windows, target_arch = "x86_64"))]
+    {
+        let gate = diagnostic
+            .1
+            .lock()
+            .map_err(|_| "Состояние общей остановки недоступно".to_string())?;
+        if matches!(gate.phase, "stopping" | "failed") {
+            return Err("Общая остановка не подтверждена; диагностика заблокирована".into());
+        }
+        let inner = strategy.try_lock()?;
+        if inner.running_id.is_some()
+            || inner.channel.is_some()
+            || inner.worker.is_some()
+            || inner.stop.is_some()
+        {
+            return Err("Сначала полностью остановите активный DPI".into());
+        }
+        let path = AppPaths::new(&app_root()?).driver_dll();
+        diagnostic.0.start(
+            Arc::new(umbranet_dpi::diagnostics::windows::TcpMetadataBackend::new(
+                path,
+            )),
+            umbranet_dpi::capture::CapturePlan::tcp_metadata_diagnostic(),
+            std::collections::BTreeSet::new(),
+        )
+    }
+    #[cfg(not(all(windows, target_arch = "x86_64")))]
+    {
+        let _ = (diagnostic, strategy);
+        Err("Диагностика доступна только в Windows x64".into())
+    }
+}
+
 #[tauri::command]
 pub async fn dpi_diagnostic_stop(
     state: State<'_, DiagnosticState>,
@@ -115,13 +195,9 @@ pub async fn dpi_diagnostic_stop(
 
 // ---- Пресеты стратегий и управление активным движком ----
 
-use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::Arc;
+use std::sync::atomic::AtomicBool;
 use umbranet_dpi::autohostlist::AutoHostList;
-use umbranet_dpi::engine::Engine;
 use umbranet_dpi::profiles::{Profiles, Summary};
-
-const ENGINE_FILTER: &str = "!loopback and ((tcp.DstPort == 80 or tcp.DstPort == 443 or tcp.DstPort == 2053 or tcp.DstPort == 2083 or tcp.DstPort == 2087 or tcp.DstPort == 2096 or tcp.DstPort == 8443) or udp.DstPort == 443 or (udp.DstPort >= 19294 and udp.DstPort <= 19344) or (udp.DstPort >= 50000 and udp.DstPort <= 65535))";
 
 #[cfg(all(windows, target_arch = "x86_64"))]
 type SharedChannel = Arc<umbranet_dpi::capture::windivert::DivertChannel>;
@@ -177,14 +253,14 @@ fn opt(value: &Option<String>) -> String {
 }
 
 pub struct StrategyState {
-    inner: Mutex<StrategyInner>,
+    inner: Arc<Mutex<StrategyInner>>,
 }
 
 struct StrategyInner {
     profiles: Result<Profiles, String>,
     stop: Option<Arc<AtomicBool>>,
     channel: Option<SharedChannel>,
-    worker: Option<std::thread::JoinHandle<()>>,
+    worker: Option<umbranet_dpi::capture::active_stop::Worker>,
     events: Option<std::sync::mpsc::Receiver<String>>,
     running_id: Option<String>,
     last_error: Option<String>,
@@ -201,7 +277,7 @@ impl StrategyState {
                 Ok(p)
             });
         Self {
-            inner: Mutex::new(StrategyInner {
+            inner: Arc::new(Mutex::new(StrategyInner {
                 profiles,
                 stop: None,
                 channel: None,
@@ -210,7 +286,7 @@ impl StrategyState {
                 running_id: None,
                 last_error: None,
                 auto_domains: Vec::new(),
-            }),
+            })),
         }
     }
 
@@ -222,19 +298,13 @@ impl StrategyState {
 }
 
 fn drain_events(inner: &mut StrategyInner) {
-    let failed = if let Some(rx) = &inner.events {
-        let mut failed = false;
+    if let Some(rx) = &inner.events {
         while let Ok(text) = rx.try_recv() {
             inner.last_error = Some(text);
-            failed = true;
         }
-        failed
-    } else {
-        false
-    };
-    if failed {
-        stop_worker(inner);
     }
+    // Не считать worker освобождённым только по событию ошибки.
+    // До включения активного Start требуется автоматический безопасный cleanup.
 }
 
 fn build_view(inner: &mut StrategyInner) -> StrategyView {
@@ -252,22 +322,6 @@ fn build_view(inner: &mut StrategyInner) -> StrategyView {
     }
 }
 
-fn stop_worker(inner: &mut StrategyInner) {
-    if let Some(flag) = inner.stop.take() {
-        flag.store(true, Ordering::Relaxed);
-    }
-    #[cfg(all(windows, target_arch = "x86_64"))]
-    if let Some(channel) = inner.channel.take() {
-        // Отменяет заблокированный WinDivertRecv, иначе join повиснет.
-        let _ = channel.shutdown();
-    }
-    if let Some(handle) = inner.worker.take() {
-        let _ = handle.join();
-    }
-    inner.events = None;
-    inner.running_id = None;
-}
-
 #[tauri::command]
 pub fn dpi_strategy_list(state: State<'_, StrategyState>) -> Result<String, String> {
     let mut inner = state.try_lock()?;
@@ -276,10 +330,7 @@ pub fn dpi_strategy_list(state: State<'_, StrategyState>) -> Result<String, Stri
 }
 
 #[tauri::command]
-pub fn dpi_strategy_select(
-    state: State<'_, StrategyState>,
-    id: String,
-) -> Result<String, String> {
+pub fn dpi_strategy_select(state: State<'_, StrategyState>, id: String) -> Result<String, String> {
     let mut inner = state.try_lock()?;
     if inner.running_id.is_some() {
         return Err("Сначала остановите обход, затем меняйте стратегию".into());
@@ -298,12 +349,29 @@ pub fn dpi_strategy_select(
 /// Включает активный движок на выбранной стратегии.
 /// Требует прав администратора и наличия WinDivert.dll рядом с драйвером.
 #[tauri::command]
-pub async fn dpi_engine_start(state: State<'_, StrategyState>) -> Result<String, String> {
-    // Не открывать активный WinDivert до завершения проверки безопасности.
+pub async fn dpi_engine_start(
+    state: State<'_, StrategyState>,
+    diagnostic: State<'_, DiagnosticState>,
+    dpi: State<'_, DpiState>,
+) -> Result<String, String> {
+    // Эта блокировка остаётся до безопасного запуска, автоочистки и Windows-проверок.
     umbranet_dpi::safety::active_start_guard().map_err(str::to_string)?;
     #[cfg(all(windows, target_arch = "x86_64"))]
     {
-        let (id, strategy, dll) = {
+        // Сериализуем подготовку, открытие и публикацию с общей остановкой и диагностикой.
+        let mut gate = diagnostic
+            .1
+            .lock()
+            .map_err(|_| "Состояние общей остановки недоступно".to_string())?;
+        if matches!(gate.phase, "stopping" | "failed") {
+            return Err("Предыдущая остановка DPI не подтверждена".into());
+        }
+        if diagnostic.0.view()?.busy {
+            return Err("Сначала остановите пассивную проверку".into());
+        }
+        // Обе блокировки держатся одновременно, поэтому выбранный профиль и
+        // цели фиксируются вместе, до открытия канала и запуска рабочего потока.
+        let (id, plan, dll) = {
             let mut inner = state.try_lock()?;
             if inner.running_id.is_some() {
                 return Ok(build_view(&mut inner).to_json());
@@ -312,19 +380,27 @@ pub async fn dpi_engine_start(state: State<'_, StrategyState>) -> Result<String,
                 Ok(p) => p,
                 Err(error) => return Err(error.clone()),
             };
-            let id = profiles
-                .selected_id()
-                .ok_or_else(|| "Стратегия не выбрана".to_string())?;
-            let strategy = profiles
-                .get(&id)
-                .cloned()
-                .ok_or_else(|| "Выбранная стратегия не найдена".to_string())?;
-            let dll = umbranet_dpi::layout::AppPaths::new(&app_root()?).driver_dll();
-            (id, strategy, dll)
+            let store = dpi
+                .0
+                .lock()
+                .map_err(|_| "Хранилище DPI недоступно".to_string())?;
+            let store = match &*store {
+                Ok(store) => store,
+                Err(error) => return Err(error.clone()),
+            };
+            let plan = store.prepare_selected_session(profiles)?;
+            plan.check_known_limits()?;
+            let id = plan.strategy().id.clone();
+            let dll = AppPaths::new(&app_root()?).driver_dll();
+            (id, plan, dll)
         };
+        let filter = plan.active_capture_filter()?;
+        let auto = AutoHostList::load(&AppPaths::new(&app_root()?).strategy_dir());
+        let auto_domains = auto.domains();
+        // Отдельный guard не позволяет запустить текущий одно-пакетный pipeline.
+        let mut engine = plan.make_guarded_engine(Some(auto))?;
 
-        let channel = match umbranet_dpi::capture::windivert::DivertChannel::open(&dll, ENGINE_FILTER)
-        {
+        let channel = match umbranet_dpi::capture::windivert::DivertChannel::open(&dll, filter) {
             Ok(channel) => Arc::new(channel),
             Err(e) => {
                 let mut inner = state.try_lock()?;
@@ -333,26 +409,14 @@ pub async fn dpi_engine_start(state: State<'_, StrategyState>) -> Result<String,
             }
         };
 
-        // Диагностический список не расширяет явно выбранные цели. Этот путь
-        // заблокирован предохранителем до подключения проверенного снимка целей.
-        let auto = AutoHostList::load(&umbranet_dpi::layout::AppPaths::new(&app_root()?).strategy_dir());
-        {
-            let mut inner = state.try_lock()?;
-            inner.auto_domains = auto.domains();
-        }
-
         let stop = Arc::new(AtomicBool::new(false));
         let thread_stop = Arc::clone(&stop);
         let thread_channel = Arc::clone(&channel);
         let (events_tx, events_rx) = std::sync::mpsc::channel::<String>();
         let handle = std::thread::spawn(move || {
-            let mut engine = Engine::with_autohostlist(
-                strategy,
-                umbranet_dpi::traffic::filter::HostList::default(),
-                umbranet_dpi::traffic::filter::IpSet::default(),
-                Some(auto),
-            );
-            let _ = engine.run_channel_with_events(&thread_channel, &thread_stop, Some(events_tx));
+            engine
+                .run_channel_with_events(&thread_channel, &thread_stop, Some(events_tx))
+                .map_err(|error| error.to_string())
         });
 
         let mut inner = state.try_lock()?;
@@ -360,27 +424,186 @@ pub async fn dpi_engine_start(state: State<'_, StrategyState>) -> Result<String,
         inner.channel = Some(channel);
         inner.worker = Some(handle);
         inner.events = Some(events_rx);
+        inner.auto_domains = auto_domains;
         inner.running_id = Some(id);
         inner.last_error = None;
+        *gate = StopView {
+            phase: "idle",
+            message: None,
+            owned_closed: false,
+            service_status: None,
+        };
         Ok(build_view(&mut inner).to_json())
     }
     #[cfg(not(all(windows, target_arch = "x86_64")))]
     {
-        let _ = state;
+        let _ = (state, diagnostic, dpi);
         Err("Активный движок доступен только в Windows x64".into())
     }
 }
 
-#[tauri::command]
-pub fn dpi_engine_stop(state: State<'_, StrategyState>) -> Result<String, String> {
-    let mut inner = state.try_lock()?;
-    stop_worker(&mut inner);
-    // Движок уже остановлен, поэтому перечитываем файл целиком.
-    if let Ok(root) = app_root() {
-        let auto = AutoHostList::load(&umbranet_dpi::layout::AppPaths::new(&root).strategy_dir());
-        inner.auto_domains = auto.domains();
+// Порядок: собственный shutdown -> join -> проверенное close -> диагностика -> SCM.
+// Всё потенциально блокирующее выполняется только в выделенном потоке.
+#[cfg(all(windows, target_arch = "x86_64"))]
+fn run_common_stop(
+    strategy: Arc<Mutex<StrategyInner>>,
+    diagnostics: Arc<umbranet_dpi::diagnostics::session::Diagnostics>,
+    control: Arc<Mutex<StopView>>,
+) -> Result<(Option<String>, &'static str), String> {
+    use umbranet_dpi::capture::active_stop::{self, Outcome};
+    let (flag, channel, worker) = {
+        let mut inner = strategy
+            .lock()
+            .map_err(|_| "Состояние DPI недоступно".to_string())?;
+        let flag = inner.stop.clone().ok_or("Нет флага остановки DPI")?;
+        let channel = inner.channel.clone().ok_or("Нет канала DPI")?;
+        let worker = inner.worker.take().ok_or("Нет потока DPI")?;
+        (flag, channel, worker)
+    };
+    let worker_error = match active_stop::stop_owned(&*channel, &flag, worker) {
+        Outcome::ShutdownFailed { worker, error } => {
+            // Сохраняем handle даже при ошибке shutdown. Поток может ещё работать;
+            // его результат нельзя объявить успешным или потерять.
+            if let Ok(mut inner) = strategy.lock() {
+                drain_events(&mut inner);
+                let message = match &inner.last_error {
+                    Some(previous) => format!("{error}; {previous}"),
+                    None => error,
+                };
+                inner.worker = Some(worker);
+                return Err(message);
+            }
+            return Err(format!("{error}; состояние потока DPI недоступно"));
+        }
+        Outcome::CloseFailed { error } => return Err(error),
+        Outcome::Closed { worker_error } => worker_error,
+    };
+    {
+        let mut inner = strategy
+            .lock()
+            .map_err(|_| "Состояние DPI недоступно после закрытия".to_string())?;
+        inner.channel = None;
+        inner.stop = None;
+        inner.running_id = None;
+        drain_events(&mut inner);
+        inner.events = None;
     }
-    Ok(build_view(&mut inner).to_json())
+    drop(channel);
+    {
+        let mut view = control
+            .lock()
+            .map_err(|_| "Состояние общей остановки недоступно".to_string())?;
+        view.owned_closed = true;
+        view.message = worker_error.clone();
+    }
+    // Диагностический handle тоже нужно закрыть до остановки общей службы.
+    let mut view = diagnostics.view()?;
+    if view.busy {
+        view = diagnostics.stop()?;
+    }
+    let begin = std::time::Instant::now();
+    while view.busy && view.phase != umbranet_dpi::diagnostics::session::Phase::StopFailed {
+        if begin.elapsed() >= std::time::Duration::from_secs(10) {
+            return Err("Пассивная проверка ещё не закрыта; общая служба не остановлена".into());
+        }
+        std::thread::sleep(std::time::Duration::from_millis(100));
+        view = diagnostics.view()?;
+    }
+    if view.busy || view.phase == umbranet_dpi::diagnostics::session::Phase::Error {
+        return Err(format!(
+            "Не подтверждено закрытие пассивной проверки: {}. Общая служба не остановлена",
+            view.message
+                .unwrap_or_else(|| "состояние неизвестно".into())
+        ));
+    }
+    let service = umbranet_dpi::capture::driver_service::request_stop_and_confirm(
+        std::time::Duration::from_secs(10),
+    )
+    .map_err(|e| format!("Не подтверждена остановка службы WinDivert: {e}"))?;
+    // Это статус SCM, не подтверждение выгрузки всех экземпляров драйвера.
+    Ok((worker_error, service.status))
+}
+
+#[tauri::command]
+pub fn dpi_engine_stop(
+    state: State<'_, StrategyState>,
+    diagnostic: State<'_, DiagnosticState>,
+) -> Result<serde_json::Value, String> {
+    #[cfg(all(windows, target_arch = "x86_64"))]
+    {
+        let mut gate = diagnostic
+            .1
+            .lock()
+            .map_err(|_| "Состояние общей остановки недоступно".to_string())?;
+        if gate.phase == "stopping" {
+            return Ok(gate.json());
+        }
+        if gate.phase == "failed" {
+            return Err(gate
+                .message
+                .clone()
+                .unwrap_or_else(|| "Остановка не подтверждена".into()));
+        }
+        {
+            let inner = state.try_lock()?;
+            if inner.running_id.is_none()
+                && inner.channel.is_none()
+                && inner.worker.is_none()
+                && inner.stop.is_none()
+            {
+                return Err(
+                    "Активная сессия DPI не запущена; общая служба не останавливалась".into(),
+                );
+            }
+            if inner.stop.is_none() || inner.channel.is_none() || inner.worker.is_none() {
+                gate.phase = "failed";
+                gate.message =
+                    Some("Состояние ресурсов DPI неполное; остановка не подтверждена".into());
+                return Err(gate.message.clone().unwrap());
+            }
+        }
+        *gate = StopView {
+            phase: "stopping",
+            message: None,
+            owned_closed: false,
+            service_status: None,
+        };
+        let strategy = state.inner.clone();
+        let diagnostics = diagnostic.0.clone();
+        let control = diagnostic.1.clone();
+        let spawn = std::thread::Builder::new().name("umbra-dpi-stop".into()).spawn(move || {
+            let outcome = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| run_common_stop(strategy, diagnostics, control.clone())));
+            if let Ok(mut gate) = control.lock() {
+                match outcome {
+                    Ok(Ok((worker_error, service))) => {
+                        gate.service_status = Some(service);
+                        if let Some(error) = worker_error { gate.phase = "failed"; gate.message = Some(error); }
+                        else { gate.phase = "complete"; }
+                    }
+                    Ok(Err(error)) => {
+                        gate.phase = "failed";
+                        gate.message = Some(match gate.message.take() { Some(previous) => format!("{previous}; {error}"), None => error });
+                    }
+                    Err(_) => {
+                        gate.phase = "failed";
+                        let error = "Ошибка общей остановки DPI (panic); состояние ресурсов не подтверждено";
+                        gate.message = Some(match gate.message.take() { Some(previous) => format!("{previous}; {error}"), None => error.into() });
+                    }
+                }
+            }
+        });
+        if let Err(error) = spawn {
+            gate.phase = "failed";
+            gate.message = Some(format!("Не удалось запустить остановку DPI: {error}"));
+            return Err(gate.message.clone().unwrap());
+        }
+        Ok(gate.json())
+    }
+    #[cfg(not(all(windows, target_arch = "x86_64")))]
+    {
+        let _ = (state, diagnostic);
+        Err("Остановка DPI доступна только в Windows x64".into())
+    }
 }
 
 /// Очищает автоматически собранный список доменов.

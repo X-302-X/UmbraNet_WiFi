@@ -15,6 +15,23 @@ impl WinDivertAddress {
     const OUTBOUND: u32 = 1 << 17;
     const LOOPBACK: u32 = 1 << 18;
     const IMPOSTOR: u32 = 1 << 19;
+    const IPV6: u32 = 1 << 20;
+    const IP_CHECKSUM: u32 = 1 << 21;
+    const TCP_CHECKSUM: u32 = 1 << 22;
+
+    /// NETWORK layer and NETWORK_PACKET event; не подтверждает источник данных.
+    pub fn network_packet(&self) -> bool {
+        self.bits & 0xffff == 0
+    }
+    pub fn ipv6(&self) -> bool {
+        self.bits & Self::IPV6 != 0
+    }
+    pub fn ip_checksum(&self) -> bool {
+        self.bits & Self::IP_CHECKSUM != 0
+    }
+    pub fn tcp_checksum(&self) -> bool {
+        self.bits & Self::TCP_CHECKSUM != 0
+    }
 
     pub fn outbound(&self) -> bool {
         self.bits & Self::OUTBOUND != 0
@@ -25,6 +42,35 @@ impl WinDivertAddress {
     pub fn impostor(&self) -> bool {
         self.bits & Self::IMPOSTOR != 0
     }
+    #[cfg(test)]
+    pub(crate) fn from_test_bits(bits: u32) -> Self {
+        Self {
+            bits,
+            ..Self::default()
+        }
+    }
+
+    #[cfg(all(test, windows, target_arch = "x86_64"))]
+    pub(crate) fn for_filter_test(
+        outbound: bool,
+        loopback: bool,
+        impostor: bool,
+        ipv6: bool,
+    ) -> Self {
+        let mut address = Self::default();
+        address.set_outbound(outbound);
+        if loopback {
+            address.bits |= Self::LOOPBACK;
+        }
+        if impostor {
+            address.bits |= Self::IMPOSTOR;
+        }
+        if ipv6 {
+            address.bits |= 1 << 20;
+        }
+        address
+    }
+
     pub fn set_outbound(&mut self, value: bool) {
         if value {
             self.bits |= Self::OUTBOUND;

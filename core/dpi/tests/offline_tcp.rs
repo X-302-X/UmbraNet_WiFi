@@ -642,3 +642,579 @@ fn split_fixture_round_trip_and_selected_domain_classification_are_offline_only(
         }
     }
 }
+
+#[test]
+fn initial_payload_ack_must_match_observed_syn_ack_and_revokes_candidate() {
+    for v6 in [false, true] {
+        for bad_ack in [0, 500, 502, u32::MAX] {
+            let mut c = table();
+            let h = handshake(&mut c, v6);
+            let request = b"GET / HTTP/1.1\r\nHost: example.com\r\n\r\n";
+            adapter::payload(
+                &mut c,
+                &h,
+                &packet(v6, true, tcp(101, 501, 0x18, request)),
+                4,
+            )
+            .unwrap();
+            assert_eq!(
+                adapter::evidence(&mut c, &h, 4),
+                Ok(Evidence::HttpHost("example.com".into()))
+            );
+            assert_eq!(
+                adapter::payload(
+                    &mut c,
+                    &h,
+                    &packet(v6, true, tcp(101, bad_ack, 0x18, request)),
+                    5
+                ),
+                Err(Error::Connection(ConnectionError::UnexpectedAck))
+            );
+            assert_eq!(
+                adapter::evidence(&mut c, &h, 5),
+                Err(Error::Connection(ConnectionError::NotFound))
+            );
+            assert!(c.is_available()); // quarantine only that tuple
+        }
+    }
+}
+
+#[test]
+fn server_isn_wraparound_and_stale_handle_cannot_retire_new_flow() {
+    for v6 in [false, true] {
+        let mut c = table();
+        let old = adapter::open(&mut c, &packet(v6, true, tcp(100, 0, 2, b"")), 1).unwrap();
+        adapter::syn_ack(
+            &mut c,
+            &old,
+            &packet(v6, false, tcp(u32::MAX, 101, 0x12, b"")),
+            2,
+        )
+        .unwrap();
+        adapter::client_ack(&mut c, &old, &packet(v6, true, tcp(101, 0, 0x10, b"")), 3).unwrap();
+        let request = b"GET / HTTP/1.1\r\nHost: example.com\r\n\r\n";
+        adapter::payload(
+            &mut c,
+            &old,
+            &packet(v6, true, tcp(101, 0, 0x18, request)),
+            4,
+        )
+        .unwrap();
+        assert_eq!(
+            adapter::evidence(&mut c, &old, 4),
+            Ok(Evidence::HttpHost("example.com".into()))
+        );
+        adapter::close(
+            &mut c,
+            &old,
+            &packet(v6, true, tcp(101, 0, 0x14, b"")),
+            Direction::Outbound,
+            5,
+        )
+        .unwrap();
+        let new = adapter::open(&mut c, &packet(v6, true, tcp(200, 0, 2, b"")), 10).unwrap();
+        adapter::syn_ack(
+            &mut c,
+            &new,
+            &packet(v6, false, tcp(600, 201, 0x12, b"")),
+            10,
+        )
+        .unwrap();
+        adapter::client_ack(
+            &mut c,
+            &new,
+            &packet(v6, true, tcp(201, 601, 0x10, b"")),
+            10,
+        )
+        .unwrap();
+        assert_eq!(
+            adapter::payload(
+                &mut c,
+                &old,
+                &packet(v6, true, tcp(201, 999, 0x18, request)),
+                10
+            ),
+            Err(Error::Connection(ConnectionError::StaleToken))
+        );
+        adapter::payload(
+            &mut c,
+            &new,
+            &packet(v6, true, tcp(201, 601, 0x18, request)),
+            10,
+        )
+        .unwrap();
+        assert_eq!(
+            adapter::evidence(&mut c, &new, 10),
+            Ok(Evidence::HttpHost("example.com".into()))
+        );
+    }
+}
+
+#[test]
+fn trailing_bytes_in_packet_are_not_flow_evidence() {
+    for v6 in [false, true] {
+        let mut c = table();
+        let h = handshake(&mut c, v6);
+        let mut data = packet(
+            v6,
+            true,
+            tcp(
+                101,
+                501,
+                0x18,
+                b"GET / HTTP/1.1\r\nHost: example.com\r\n\r\n",
+            ),
+        );
+        data.push(0);
+        assert_eq!(
+            adapter::payload(&mut c, &h, &data, 4),
+            Err(Error::UnsupportedPacket)
+        );
+        assert!(!c.is_available());
+        assert_eq!(
+            adapter::evidence(&mut c, &h, 4),
+            Err(Error::Connection(ConnectionError::Unavailable))
+        );
+    }
+}
+
+#[test]
+fn mismatched_ack_quarantines_only_its_tuple_not_other_connections() {
+    fn with_local_port(mut raw: Vec<u8>, v6: bool, outgoing: bool, port: u16) -> Vec<u8> {
+        let offset = (if v6 { 40 } else { 20 }) + if outgoing { 0 } else { 2 };
+        raw[offset..offset + 2].copy_from_slice(&port.to_be_bytes());
+        seal(&mut raw);
+        raw
+    }
+    for v6 in [false, true] {
+        let mut c = table();
+        let first = handshake(&mut c, v6);
+        let p = |out, spec| with_local_port(packet(v6, out, spec), v6, out, 40001);
+        let second = adapter::open(&mut c, &p(true, tcp(200, 0, 2, b"")), 3).unwrap();
+        adapter::syn_ack(&mut c, &second, &p(false, tcp(600, 201, 0x12, b"")), 3).unwrap();
+        adapter::client_ack(&mut c, &second, &p(true, tcp(201, 601, 0x10, b"")), 3).unwrap();
+        let selected = b"GET / HTTP/1.1\r\nHost: example.com\r\n\r\n";
+        adapter::payload(
+            &mut c,
+            &first,
+            &packet(v6, true, tcp(101, 501, 0x18, selected)),
+            4,
+        )
+        .unwrap();
+        adapter::payload(&mut c, &second, &p(true, tcp(201, 601, 0x18, selected)), 4).unwrap();
+        assert_eq!(
+            adapter::payload(
+                &mut c,
+                &first,
+                &packet(v6, true, tcp(101, 502, 0x18, selected)),
+                5
+            ),
+            Err(Error::Connection(ConnectionError::UnexpectedAck))
+        );
+        assert_eq!(
+            adapter::evidence(&mut c, &first, 5),
+            Err(Error::Connection(ConnectionError::NotFound))
+        );
+        assert_eq!(
+            adapter::evidence(&mut c, &second, 5),
+            Ok(Evidence::HttpHost("example.com".into()))
+        );
+        assert_eq!(
+            adapter::open(&mut c, &packet(v6, true, tcp(300, 0, 2, b"")), 5),
+            Err(Error::Connection(ConnectionError::KeyBusy))
+        );
+    }
+}
+
+fn observed_handshake(c: &mut Connections, v6: bool) {
+    use adapter::Observation::Tracking;
+    assert_eq!(
+        adapter::observe(
+            c,
+            &packet(v6, true, tcp(100, 0, 2, b"")),
+            Direction::Outbound,
+            1
+        ),
+        Ok(Tracking)
+    );
+    assert_eq!(
+        adapter::observe(
+            c,
+            &packet(v6, false, tcp(500, 101, 0x12, b"")),
+            Direction::Inbound,
+            2
+        ),
+        Ok(Tracking)
+    );
+    assert_eq!(
+        adapter::observe(
+            c,
+            &packet(v6, true, tcp(101, 501, 0x10, b"")),
+            Direction::Outbound,
+            3
+        ),
+        Ok(Tracking)
+    );
+}
+
+#[test]
+fn automatic_packet_routing_collects_only_contiguous_selected_domain_candidate() {
+    use adapter::Observation::{Candidate, Tracking, Untracked};
+    use umbranet_dpi::{
+        catalog::Catalog,
+        selection::Selection,
+        strategy::Strategy,
+        traffic::classifier::{classify, Match},
+    };
+    let catalog = Catalog::from_json(include_str!("../services.json")).unwrap();
+    let strategy =
+        Strategy::from_json(include_str!("../../../strtegs_Uz/pass-through.json")).unwrap();
+    let mut selected = Selection::default();
+    selected.add_domain("example.com").unwrap();
+    let snapshot = selected.snapshot(&catalog, &strategy).unwrap();
+    for v6 in [false, true] {
+        let mut c = table();
+        let req = b"GET / HTTP/1.1\r\nHost: example.com\r\n\r\n";
+        let early = packet(v6, true, tcp(101, 501, 0x18, req));
+        assert_eq!(
+            adapter::observe(&mut c, &early, Direction::Outbound, 0),
+            Ok(Untracked)
+        );
+        observed_handshake(&mut c, v6);
+        let tail = packet(v6, true, tcp(111, 501, 0x18, &req[10..]));
+        assert!(matches!(
+            adapter::observe(&mut c, &tail, Direction::Outbound, 4),
+            Ok(Candidate {
+                evidence: Evidence::Unknown,
+                ..
+            })
+        ));
+        let head = packet(v6, true, tcp(101, 501, 0x18, &req[..10]));
+        let result = adapter::observe(&mut c, &head, Direction::Outbound, 5).unwrap();
+        let Candidate {
+            key,
+            token,
+            evidence,
+        } = result
+        else {
+            panic!("expected evidence");
+        };
+        assert_eq!(c.evidence(&key, token, 5), Ok(evidence.clone()));
+        assert_eq!(
+            classify(&snapshot, &evidence, None),
+            Match::Domain("example.com".into())
+        );
+        assert_eq!(
+            classify(
+                &Selection::default().snapshot(&catalog, &strategy).unwrap(),
+                &evidence,
+                None
+            ),
+            Match::Unknown
+        );
+        let close = packet(v6, false, tcp(501, 101, 0x11, b""));
+        assert_eq!(
+            adapter::observe(&mut c, &close, Direction::Inbound, 6),
+            Ok(adapter::Observation::Closed)
+        );
+        assert_eq!(c.evidence(&key, token, 6), Err(ConnectionError::NotFound));
+        assert_eq!(
+            adapter::observe(&mut c, &head, Direction::Outbound, 6),
+            Ok(Untracked)
+        );
+        assert_eq!(
+            adapter::observe(
+                &mut c,
+                &packet(v6, true, tcp(300, 0, 2, b"")),
+                Direction::Outbound,
+                6
+            ),
+            Err(Error::Connection(ConnectionError::KeyBusy))
+        );
+        assert_eq!(
+            adapter::observe(
+                &mut c,
+                &packet(v6, true, tcp(300, 0, 2, b"")),
+                Direction::Outbound,
+                11
+            ),
+            Ok(Tracking)
+        );
+    }
+}
+
+#[test]
+fn automatic_router_rejects_wrong_ack_conflicts_and_unmodelled_inbound_data() {
+    use adapter::Observation::{Candidate, Untracked};
+    for v6 in [false, true] {
+        for bad in [
+            packet(v6, true, tcp(101, 502, 0x18, b"x")),
+            packet(v6, false, tcp(501, 101, 0x18, b"server data")),
+        ] {
+            let direction = if bad == packet(v6, true, tcp(101, 502, 0x18, b"x")) {
+                Direction::Outbound
+            } else {
+                Direction::Inbound
+            };
+            let mut c = table();
+            observed_handshake(&mut c, v6);
+            assert!(adapter::observe(&mut c, &bad, direction, 4).is_err());
+            let data = packet(v6, true, tcp(101, 501, 0x18, b"x"));
+            assert_eq!(
+                adapter::observe(&mut c, &data, Direction::Outbound, 4),
+                Ok(Untracked)
+            );
+        }
+        let mut c = table();
+        observed_handshake(&mut c, v6);
+        assert!(matches!(
+            adapter::observe(
+                &mut c,
+                &packet(v6, true, tcp(101, 501, 0x18, b"abc")),
+                Direction::Outbound,
+                4
+            ),
+            Ok(Candidate {
+                evidence: Evidence::Unknown,
+                ..
+            })
+        ));
+        assert_eq!(
+            adapter::observe(
+                &mut c,
+                &packet(v6, true, tcp(102, 501, 0x18, b"X")),
+                Direction::Outbound,
+                5
+            ),
+            Err(Error::Connection(ConnectionError::Prefix(
+                StreamError::ConflictingOverlap
+            )))
+        );
+    }
+}
+
+#[test]
+fn automatic_router_rejects_duplicate_syn_and_source_loss_disables_all() {
+    use adapter::Observation::{Tracking, Untracked};
+    let mut c = table();
+    let syn = packet(false, true, tcp(100, 0, 2, b""));
+    assert_eq!(
+        adapter::observe(&mut c, &syn, Direction::Outbound, 1),
+        Ok(Tracking)
+    );
+    assert_eq!(
+        adapter::observe(&mut c, &syn, Direction::Outbound, 2),
+        Err(Error::Connection(ConnectionError::KeyBusy))
+    );
+    let syn_ack = packet(false, false, tcp(500, 101, 0x12, b""));
+    assert_eq!(
+        adapter::observe(&mut c, &syn_ack, Direction::Inbound, 2),
+        Ok(Untracked)
+    );
+    c.invalidate(); // observer must signal lost/uncertain capture
+    assert_eq!(
+        adapter::observe(&mut c, &syn, Direction::Outbound, 3),
+        Err(Error::Connection(ConnectionError::Unavailable))
+    );
+}
+
+#[test]
+fn automatic_router_ech_and_invalid_capture_never_become_domain_evidence() {
+    use adapter::Observation::Candidate;
+    for v6 in [false, true] {
+        let mut c = table();
+        observed_handshake(&mut c, v6);
+        let ech = packet(v6, true, tcp(101, 501, 0x18, &hello(true)));
+        assert!(matches!(
+            adapter::observe(&mut c, &ech, Direction::Outbound, 4),
+            Ok(Candidate {
+                evidence: Evidence::EncryptedClientHello,
+                ..
+            })
+        ));
+        let mut truncated = ech.clone();
+        truncated.pop();
+        assert!(adapter::observe(&mut c, &truncated, Direction::Outbound, 5).is_err());
+        assert!(!c.is_available());
+        assert_eq!(
+            adapter::observe(&mut c, &ech, Direction::Outbound, 5),
+            Err(Error::Connection(ConnectionError::Unavailable))
+        );
+    }
+}
+
+#[test]
+fn automatic_router_scopes_candidates_to_distinct_flow_tokens_and_plan() {
+    use adapter::Observation::Candidate;
+    use std::{
+        fs,
+        sync::atomic::{AtomicU64, Ordering},
+    };
+    use umbranet_dpi::{store::Store, strategy::Strategy, traffic::classifier::Match};
+    static NEXT: AtomicU64 = AtomicU64::new(0);
+    let dir = std::env::temp_dir().join(format!(
+        "umbra-router-{}-{}",
+        std::process::id(),
+        NEXT.fetch_add(1, Ordering::Relaxed)
+    ));
+    fs::create_dir(&dir).unwrap();
+    let mut store = Store::open(&dir).unwrap();
+    store.apply("add_domain", "example.com", true).unwrap();
+    let strategy =
+        Strategy::from_json(include_str!("../../../strtegs_Uz/pass-through.json")).unwrap();
+    let plan = store.prepare_session(&strategy).unwrap();
+    for v6 in [false, true] {
+        let mut c = table();
+        observed_handshake(&mut c, v6);
+        let second_packet = |out: bool, spec: Tcp<'_>| {
+            let mut p = packet(v6, out, spec);
+            let offset = (if v6 { 40 } else { 20 }) + if out { 0 } else { 2 };
+            p[offset..offset + 2].copy_from_slice(&40001u16.to_be_bytes());
+            seal(&mut p);
+            p
+        };
+        adapter::observe(
+            &mut c,
+            &second_packet(true, tcp(200, 0, 2, b"")),
+            Direction::Outbound,
+            3,
+        )
+        .unwrap();
+        adapter::observe(
+            &mut c,
+            &second_packet(false, tcp(600, 201, 0x12, b"")),
+            Direction::Inbound,
+            3,
+        )
+        .unwrap();
+        adapter::observe(
+            &mut c,
+            &second_packet(true, tcp(201, 601, 0x10, b"")),
+            Direction::Outbound,
+            3,
+        )
+        .unwrap();
+        let selected = b"GET / HTTP/1.1\r\nHost: example.com\r\n\r\n";
+        let other = b"GET / HTTP/1.1\r\nHost: other.example\r\n\r\n";
+        let Candidate {
+            key: k1, token: t1, ..
+        } = adapter::observe(
+            &mut c,
+            &packet(v6, true, tcp(101, 501, 0x18, selected)),
+            Direction::Outbound,
+            4,
+        )
+        .unwrap()
+        else {
+            panic!()
+        };
+        let Candidate {
+            key: k2, token: t2, ..
+        } = adapter::observe(
+            &mut c,
+            &second_packet(true, tcp(201, 601, 0x18, other)),
+            Direction::Outbound,
+            4,
+        )
+        .unwrap()
+        else {
+            panic!()
+        };
+        assert_ne!(k1, k2);
+        assert_ne!(t1, t2);
+        assert_eq!(
+            plan.offline_tcp_candidate(&mut c, &k1, t1, 4),
+            Ok(Match::Domain("example.com".into()))
+        );
+        assert_eq!(
+            plan.offline_tcp_candidate(&mut c, &k2, t2, 4),
+            Ok(Match::Unknown)
+        );
+        assert_eq!(
+            plan.offline_tcp_candidate(&mut c, &k2, t1, 4),
+            Err(ConnectionError::StaleToken)
+        );
+        assert!(adapter::observe(
+            &mut c,
+            &packet(v6, true, tcp(101, 501, 0x18, b"X")),
+            Direction::Outbound,
+            5
+        )
+        .is_err());
+        assert_eq!(
+            plan.offline_tcp_candidate(&mut c, &k1, t1, 5),
+            Err(ConnectionError::NotFound)
+        );
+        assert_eq!(
+            plan.offline_tcp_candidate(&mut c, &k2, t2, 5),
+            Ok(Match::Unknown)
+        );
+    }
+    fs::remove_dir_all(dir).unwrap();
+}
+
+#[test]
+fn automatic_router_capacity_never_evicts_or_crosses_connections() {
+    use adapter::Observation::{Candidate, Tracking};
+    let mut c = table();
+    observed_handshake(&mut c, false);
+    for port in [40001u16, 40002] {
+        let mut syn = packet(false, true, tcp(200, 0, 2, b""));
+        syn[20..22].copy_from_slice(&port.to_be_bytes());
+        seal(&mut syn);
+        assert_eq!(
+            adapter::observe(&mut c, &syn, Direction::Outbound, 3),
+            Ok(Tracking)
+        );
+    }
+    let mut fourth = packet(false, true, tcp(200, 0, 2, b""));
+    fourth[20..22].copy_from_slice(&40003u16.to_be_bytes());
+    seal(&mut fourth);
+    assert_eq!(
+        adapter::observe(&mut c, &fourth, Direction::Outbound, 4),
+        Err(Error::Connection(ConnectionError::Capacity))
+    );
+    let req = packet(
+        false,
+        true,
+        tcp(
+            101,
+            501,
+            0x18,
+            b"GET / HTTP/1.1\r\nHost: example.com\r\n\r\n",
+        ),
+    );
+    assert!(matches!(
+        adapter::observe(&mut c, &req, Direction::Outbound, 4),
+        Ok(Candidate {
+            evidence: Evidence::HttpHost(_),
+            ..
+        })
+    ));
+}
+
+#[test]
+fn automatic_router_never_reuses_an_expired_flow_for_payload() {
+    use adapter::Observation::Untracked;
+    let mut c = table();
+    observed_handshake(&mut c, false);
+    let data = packet(
+        false,
+        true,
+        tcp(
+            101,
+            501,
+            0x18,
+            b"GET / HTTP/1.1\r\nHost: example.com\r\n\r\n",
+        ),
+    );
+    assert_eq!(
+        adapter::observe(&mut c, &data, Direction::Outbound, 13),
+        Ok(Untracked)
+    );
+    assert_eq!(
+        adapter::observe(&mut c, &data, Direction::Outbound, 12),
+        Err(Error::Connection(ConnectionError::ClockWentBackwards))
+    );
+    assert!(!c.is_available());
+}

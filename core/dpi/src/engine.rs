@@ -13,13 +13,9 @@ use std::collections::HashMap;
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
 
 #[cfg(all(windows, target_arch = "x86_64"))]
-use crate::capture::windivert::DivertChannel;
-#[cfg(all(windows, target_arch = "x86_64"))]
 use std::io;
 #[cfg(all(windows, target_arch = "x86_64"))]
-use std::path::Path;
-#[cfg(all(windows, target_arch = "x86_64"))]
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::AtomicBool;
 #[cfg(all(windows, target_arch = "x86_64"))]
 use std::sync::mpsc::Sender;
 
@@ -218,19 +214,6 @@ impl Engine {
         }
     }
 
-    /// Запускает блокирующий цикл перехвата и модификации пакетов через WinDivert.
-    #[cfg(all(windows, target_arch = "x86_64"))]
-    pub fn run_divert(
-        &mut self,
-        dll_path: &Path,
-        filter: &str,
-        stop_flag: &AtomicBool,
-        events: Option<Sender<String>>,
-    ) -> io::Result<()> {
-        let channel = DivertChannel::open(dll_path, filter)?;
-        self.run_channel_with_events(&channel, stop_flag, events)
-    }
-
     /// Цикл с передачей ошибок наружу (для интерфейса).
     #[cfg(all(windows, target_arch = "x86_64"))]
     pub fn run_channel_with_events(
@@ -256,24 +239,13 @@ impl Engine {
         // Даже при наличии канала цикл нельзя включать до безопасного drain.
         crate::safety::active_start_guard()
             .map_err(|e| io::Error::new(io::ErrorKind::PermissionDenied, e))?;
-        // ВАЖНО: прежний цикл ниже НЕ вычитывает всю очередь после Shutdown(RECV)
-        // и скрывает некоторые ошибки при stop. Он остаётся заблокированным.
-        while !stop_flag.load(Ordering::Relaxed) {
-            let (raw, addr) = match channel.receive() {
-                Ok(res) => res,
-                Err(_) if stop_flag.load(Ordering::Relaxed) => break,
-                Err(e) => return Err(e),
-            };
-            let outbound = addr.outbound();
-            let out_packets = self.process_packet(&raw, outbound);
-            // Нельзя игнорировать ошибку: частичная пачка не является успехом.
-            // Этот шаг не обеспечивает rollback и не делает запуск безопасным.
-            crate::traffic::reinject::send_packets(&out_packets, |pkt| {
-                let mut out_addr = addr;
-                out_addr.set_outbound(outbound);
-                channel.send(pkt, &out_addr).map(|sent| sent as usize)
-            })?;
-        }
-        Ok(())
+        // Контроллер должен сначала установить флаг, затем выполнить Shutdown(RECV).
+        // Цикл отправит оригиналы оставшейся очереди до ERROR_NO_DATA.
+        // Это не является подтверждением закрытия handle или выгрузки драйвера.
+        crate::capture::packet_loop::run(channel, stop_flag, |raw, _addr| {
+            // Даже корректные checksum и metadata не доказывают отсутствие LSO
+            // или принадлежность выбранной цели. Только неизменённый оригинал.
+            crate::capture::tcp_checksum::pass_through_while_lso_unknown(raw)
+        })
     }
 }

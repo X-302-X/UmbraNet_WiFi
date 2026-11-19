@@ -37,13 +37,31 @@ pub struct FlowLog {
 }
 const FLOW_LOG_LIMIT: usize = 200;
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Kind {
+    Flow,
+    TcpMetadata,
+}
+
+pub enum DiagnosticEvent {
+    Flow(Option<Observation>),
+    Tcp(crate::diagnostics::tcp_stats::PacketFacts),
+}
+
 pub trait Observer: Send + Sync + 'static {
     fn receive(&self) -> io::Result<Option<Observation>>;
+    fn receive_event(&self) -> io::Result<DiagnosticEvent> {
+        self.receive().map(DiagnosticEvent::Flow)
+    }
     fn shutdown(&self) -> io::Result<()>;
     /// Вызывается после завершения receive и shutdown, вне блокировки состояния.
     fn close(&self) -> io::Result<()>;
 }
 pub trait Backend: Send + Sync + 'static {
+    fn kind(&self) -> Kind {
+        Kind::Flow
+    }
     fn open(&self, plan: &CapturePlan) -> io::Result<Arc<dyn Observer>>;
     /// Текущий снимок, не подтверждающий, что PID не был переиспользован.
     fn process_name(&self, pid: u32) -> io::Result<String>;
@@ -63,6 +81,8 @@ pub enum Phase {
 
 #[derive(Debug, Clone, Serialize)]
 pub struct View {
+    pub kind: Kind,
+    pub tcp_stats: crate::diagnostics::tcp_stats::TcpStats,
     pub phase: Phase,
     pub busy: bool,
     pub established: u64,
@@ -80,6 +100,8 @@ pub struct View {
 impl Default for View {
     fn default() -> Self {
         Self {
+            kind: Kind::Flow,
+            tcp_stats: crate::diagnostics::tcp_stats::TcpStats::default(),
             phase: Phase::Idle,
             busy: false,
             established: 0,
@@ -144,6 +166,7 @@ impl Diagnostics {
         plan: CapturePlan,
         selected: BTreeSet<String>,
     ) -> Result<View, String> {
+        let kind = backend.kind();
         let session_id = {
             let mut s = self
                 .shared
@@ -160,6 +183,7 @@ impl Diagnostics {
             s.closing = false;
             s.pending_finish = None;
             s.view = View {
+                kind,
                 phase: Phase::Starting,
                 busy: true,
                 session_id: s.session_id,
@@ -175,7 +199,7 @@ impl Diagnostics {
             .spawn(move || {
                 let panic_shared = shared.clone();
                 let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-                    run(shared, session_id, backend, plan, selected, duration)
+                    run(shared, session_id, backend, plan, selected, duration, kind)
                 }));
                 if result.is_err() {
                     finish(
@@ -397,6 +421,7 @@ fn run(
     plan: CapturePlan,
     selected: BTreeSet<String>,
     duration: Duration,
+    kind: Kind,
 ) {
     let (timer_done, timer_wait) = mpsc::channel::<()>();
     let timer_shared = shared.clone();
@@ -456,7 +481,7 @@ fn run(
         if stopping {
             break;
         }
-        let event = match source.receive() {
+        let event = match source.receive_event() {
             Ok(event) => event,
             Err(error) => {
                 let stopping = shared
@@ -470,6 +495,30 @@ fn run(
                     failure = Some(format!("Не удалось получить событие: {error}"));
                 }
                 break;
+            }
+        };
+        let event = match event {
+            DiagnosticEvent::Tcp(facts) => {
+                if let Ok(mut s) = shared.state.lock() {
+                    if s.session_id != session_id || s.requested_stop {
+                        break;
+                    }
+                    if s.view.kind != Kind::TcpMetadata {
+                        failure = Some("Источник вернул неверный тип диагностики".into());
+                        break;
+                    }
+                    s.view.tcp_stats.record(facts);
+                } else {
+                    break;
+                }
+                continue;
+            }
+            DiagnosticEvent::Flow(event) => {
+                if kind != Kind::Flow {
+                    failure = Some("Источник вернул неверный тип диагностики".into());
+                    break;
+                }
+                event
             }
         };
         let process = event

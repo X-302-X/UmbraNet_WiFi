@@ -5,7 +5,7 @@ use std::net::SocketAddr;
 
 use super::application::Evidence;
 use super::checksum::{verify_tcp, ChecksumError};
-use super::connections::{Connections, Error as ConnectionError, Token};
+use super::connections::{Connections, Error as ConnectionError, Token, TrackingPhase};
 use super::packet::{parse_ip, PacketError, Protocol, TcpHeader};
 use super::tcp_options::{self, OptionError};
 use crate::flow::tracker::{FlowKey, Transport};
@@ -42,6 +42,16 @@ struct Segment<'a> {
 
 fn decode(bytes: &[u8], direction: Direction) -> Result<Segment<'_>, Error> {
     let packet = parse_ip(bytes).map_err(Error::Packet)?;
+    // Разбор и checksum сами допускают хвост после IP length. Для сопоставления
+    // целого пакета такой буфер неоднозначен и целиком исключается из модели.
+    let declared = match bytes[0] >> 4 {
+        4 => u16::from_be_bytes([bytes[2], bytes[3]]) as usize,
+        6 => 40 + u16::from_be_bytes([bytes[4], bytes[5]]) as usize,
+        _ => return Err(Error::UnsupportedPacket),
+    };
+    if declared != bytes.len() {
+        return Err(Error::UnsupportedPacket);
+    }
     // IP options и IPv6 extension headers не интерпретируются: никакого угадывания.
     if bytes[0] >> 4 == 4 && (bytes[0] & 0x0f != 5 || bytes[6] & 0x80 != 0) {
         return Err(Error::UnsupportedPacket);
@@ -167,6 +177,7 @@ pub fn client_ack(
 }
 
 /// Только исходящие непустые данные с ACK и необязательным PSH.
+/// Допускает лишь ACK начального server SYN; последующие ответы не моделируются.
 pub fn payload(
     table: &mut Connections,
     handle: &Handle,
@@ -178,7 +189,14 @@ pub fn payload(
         return reject(table, handle, now);
     }
     table
-        .payload(&handle.key, handle.token, s.tcp.sequence, s.payload, now)
+        .payload_initial_ack(
+            &handle.key,
+            handle.token,
+            s.tcp.sequence,
+            s.tcp.acknowledgment,
+            s.payload,
+            now,
+        )
         .map_err(Error::Connection)
 }
 
@@ -198,6 +216,84 @@ pub fn close(
     table
         .close(&handle.key, handle.token, now)
         .map_err(Error::Connection)
+}
+
+/// Результат наблюдения синтетического пакета; ни один вариант не является
+/// разрешением на изменение трафика или доказательством принадлежности процессу.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Observation {
+    Untracked,
+    Tracking,
+    Closed,
+    /// Ключ и экземпляр нужны для повторной проверки состояния через
+    /// SessionPlan::offline_tcp_candidate; результат нельзя кэшировать как разрешение.
+    Candidate {
+        key: FlowKey,
+        token: Token,
+        evidence: Evidence,
+    },
+}
+
+/// Маршрутизация пакета по направленной пятёрке и фазе handshake без внешнего
+/// выбора handle. Требует полный упорядоченный офлайн-источник без offload;
+/// непрерывность/подлинность источника здесь не подтверждается. При пропуске
+/// или ненадёжности источника вызывающий обязан вызвать Connections::invalidate.
+/// Входящие данные и посторонние пакеты известного потока пока завершают его
+/// наблюдение: общую TCP state machine этот адаптер не реализует.
+pub fn observe(
+    table: &mut Connections,
+    bytes: &[u8],
+    direction: Direction,
+    now: u64,
+) -> Result<Observation, Error> {
+    let s = prepare(table, bytes, direction, now)?;
+    let tracked = table.tracking(&s.key, now).map_err(Error::Connection)?;
+    let is_open = direction == Direction::Outbound
+        && s.tcp.flags == 0x02
+        && s.tcp.acknowledgment == 0
+        && s.payload.is_empty();
+    if is_open {
+        // Повторный SYN по активному или находящемуся в карантине ключу
+        // намеренно не считается новым потоком и блокирует эту пятёрку.
+        open(table, bytes, now)?;
+        return Ok(Observation::Tracking);
+    }
+    let Some((token, phase)) = tracked else {
+        return Ok(Observation::Untracked);
+    };
+    let handle = Handle { key: s.key, token };
+    if matches!(s.tcp.flags, 0x01 | 0x11 | 0x04 | 0x14) && s.payload.is_empty() {
+        close(table, &handle, bytes, direction, now)?;
+        return Ok(Observation::Closed);
+    }
+    match (phase, direction) {
+        (TrackingPhase::AwaitingSynAck | TrackingPhase::AwaitingClientAck, Direction::Inbound)
+            if s.tcp.flags == 0x12 && s.payload.is_empty() =>
+        {
+            syn_ack(table, &handle, bytes, now)?;
+            Ok(Observation::Tracking)
+        }
+        (TrackingPhase::AwaitingClientAck, Direction::Outbound)
+            if s.tcp.flags == 0x10 && s.payload.is_empty() =>
+        {
+            client_ack(table, &handle, bytes, now)?;
+            Ok(Observation::Tracking)
+        }
+        (TrackingPhase::Established, Direction::Outbound)
+            if matches!(s.tcp.flags, 0x10 | 0x18) && !s.payload.is_empty() =>
+        {
+            payload(table, &handle, bytes, now)?;
+            Ok(Observation::Candidate {
+                key: handle.key.clone(),
+                token: handle.token,
+                evidence: evidence(table, &handle, now)?,
+            })
+        }
+        _ => {
+            reject(table, &handle, now)?;
+            unreachable!("reject всегда возвращает ошибку")
+        }
+    }
 }
 
 /// Предварительный результат; не доказывает доставку, PID или безопасность изменения пакета.

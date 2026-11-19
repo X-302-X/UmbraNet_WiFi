@@ -3,6 +3,7 @@ use std::path::PathBuf;
 use std::sync::atomic::{AtomicU64, Ordering};
 use umbranet_dpi::{
     autohostlist::AutoHostList,
+    profiles::Profiles,
     store::Store,
     strategy::{Action, Strategy},
 };
@@ -178,4 +179,83 @@ fn youtube_service_snapshot_contains_only_selected_service_and_manual_domains() 
         .prepare_session(&strategy())
         .unwrap()
         .matches_domain("youtube.com"));
+}
+
+#[test]
+fn actual_selected_profile_and_targets_are_frozen_together_for_preparation() {
+    let dir = Temp::new();
+    let profile_dir = dir.0.join("profiles");
+    fs::create_dir(&profile_dir).unwrap();
+    fs::write(
+        profile_dir.join("split.json"),
+        serde_json::to_vec(&strategy()).unwrap(),
+    )
+    .unwrap();
+    fs::write(
+        profile_dir.join("pass-through.json"),
+        include_str!("../../../strtegs_Uz/pass-through.json"),
+    )
+    .unwrap();
+    let profiles = Profiles::load(&profile_dir).unwrap();
+    let mut store = Store::open(&dir.0.join("store")).unwrap();
+    store.apply("add_domain", "selected.example", true).unwrap();
+    assert!(store.prepare_selected_session(&profiles).is_err());
+    profiles.select("split").unwrap();
+    let frozen = store.prepare_selected_session(&profiles).unwrap();
+    assert_eq!(frozen.strategy().id, "split");
+    assert!(frozen.matches_domain("sub.selected.example"));
+    profiles.select("pass-through").unwrap();
+    store
+        .apply("remove_domain", "selected.example", false)
+        .unwrap();
+    store.apply("add_domain", "new.example", true).unwrap();
+    let next = store.prepare_selected_session(&profiles).unwrap();
+    assert_eq!(frozen.strategy().id, "split");
+    assert!(frozen.matches_domain("selected.example"));
+    assert!(!frozen.matches_domain("new.example"));
+    assert_eq!(next.strategy().id, "pass-through");
+    assert!(next.matches_domain("new.example"));
+    assert!(!next.matches_domain("selected.example"));
+    assert!(frozen.check_known_limits().is_ok());
+    let filter = frozen.active_capture_filter().unwrap();
+    assert!(filter.contains("outbound") && filter.contains("inbound"));
+    for port in [80, 443, 2053, 2083, 2087, 2096, 8443] {
+        assert!(filter.contains(&format!("tcp.DstPort == {port}")));
+        assert!(filter.contains(&format!("tcp.SrcPort == {port}")));
+    }
+    assert!(!filter.contains("udp."));
+    assert!(matches!(frozen.make_guarded_engine(None), Err(e) if e.contains("временно отключён")));
+}
+
+#[test]
+fn actual_selected_profile_preparation_never_broadens_process_or_udp_scope() {
+    let dir = Temp::new();
+    let profile_dir = dir.0.join("profiles");
+    fs::create_dir(&profile_dir).unwrap();
+    fs::write(
+        profile_dir.join("split.json"),
+        serde_json::to_vec(&strategy()).unwrap(),
+    )
+    .unwrap();
+    fs::write(
+        profile_dir.join("quic.json"),
+        include_str!("../../../strtegs_Uz/quic-bypass.json"),
+    )
+    .unwrap();
+    let profiles = Profiles::load(&profile_dir).unwrap();
+    let mut store = Store::open(&dir.0.join("store")).unwrap();
+    store.apply("add_domain", "selected.example", true).unwrap();
+    store.apply("add_process", "other.exe", true).unwrap();
+    profiles.select("split").unwrap();
+    let plan = store.prepare_selected_session(&profiles).unwrap();
+    assert!(plan.manual_processes().contains("other.exe"));
+    assert!(plan.check_known_limits().is_err());
+    assert!(plan.active_capture_filter().is_err());
+    store.apply("remove_process", "other.exe", false).unwrap();
+    let quic: Strategy =
+        Strategy::from_json(include_str!("../../../strtegs_Uz/quic-bypass.json")).unwrap();
+    profiles.select(&quic.id).unwrap();
+    let plan = store.prepare_selected_session(&profiles).unwrap();
+    assert!(plan.check_known_limits().is_err());
+    assert!(plan.active_capture_filter().is_err());
 }

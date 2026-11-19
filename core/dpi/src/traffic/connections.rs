@@ -69,6 +69,7 @@ pub enum Error {
     StaleToken,
     WrongState,
     InvalidHandshake,
+    UnexpectedAck,
     Prefix(StreamError),
     TokenExhausted,
 }
@@ -77,6 +78,14 @@ pub enum Error {
 enum Phase {
     AwaitingSynAck,
     AwaitingClientAck(u32),
+    Established { initial_server_next: u32 },
+}
+
+/// Только для автоматической маршрутизации в офлайн-адаптере.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) enum TrackingPhase {
+    AwaitingSynAck,
+    AwaitingClientAck,
     Established,
 }
 
@@ -136,6 +145,27 @@ impl Connections {
             _ => true,
         });
         Ok(())
+    }
+
+    /// Токен достаётся из этой таблицы, а не из внешнего произвольного пакета.
+    /// Карантин и отсутствующий ключ не дают активного токена.
+    pub(super) fn tracking(
+        &mut self,
+        key: &FlowKey,
+        now: u64,
+    ) -> Result<Option<(Token, TrackingPhase)>, Error> {
+        self.advance(now)?;
+        Ok(match self.slots.get(key) {
+            Some(Slot::Active(a)) => Some((
+                a.token,
+                match a.phase {
+                    Phase::AwaitingSynAck => TrackingPhase::AwaitingSynAck,
+                    Phase::AwaitingClientAck(_) => TrackingPhase::AwaitingClientAck,
+                    Phase::Established { .. } => TrackingPhase::Established,
+                },
+            )),
+            _ => None,
+        })
     }
 
     /// Вызывается после наблюдения исходящего SYN без ACK на новом ключе.
@@ -222,22 +252,26 @@ impl Connections {
     ) -> Result<(), Error> {
         self.advance(now)?;
         let a = self.active(key, token)?;
-        let valid = match a.phase {
-            Phase::AwaitingClientAck(server_isn) => {
-                seq == a.client_isn.wrapping_add(1) && ack == server_isn.wrapping_add(1)
+        let expected_server_next = match a.phase {
+            Phase::AwaitingClientAck(server_isn)
+                if seq == a.client_isn.wrapping_add(1) && ack == server_isn.wrapping_add(1) =>
+            {
+                server_isn.wrapping_add(1)
             }
-            _ => false,
+            _ => {
+                self.retire(key, now);
+                return Err(Error::InvalidHandshake);
+            }
         };
-        if !valid {
-            self.retire(key, now);
-            return Err(Error::InvalidHandshake);
-        }
-        a.phase = Phase::Established;
+        a.phase = Phase::Established {
+            initial_server_next: expected_server_next,
+        };
         a.last_activity = now;
         Ok(())
     }
 
-    /// Только исходящие данные после модели handshake; sequence — первого байта.
+    /// Низкоуровневая синтетическая модель без проверки ACK. Для работы с
+    /// полными пакетами использовать payload_initial_ack, а не этот метод.
     pub fn payload(
         &mut self,
         key: &FlowKey,
@@ -246,13 +280,49 @@ impl Connections {
         data: &[u8],
         now: u64,
     ) -> Result<(), Error> {
+        self.payload_inner(key, token, seq, None, data, now)
+    }
+
+    /// Для начальных клиентских данных допускается только ACK серверного SYN.
+    /// Продвижение ACK (например, после ответа сервера) пока не моделируется;
+    /// даже допустимый ACK не доказывает подлинность или доставку пакета.
+    pub fn payload_initial_ack(
+        &mut self,
+        key: &FlowKey,
+        token: Token,
+        seq: u32,
+        ack: u32,
+        data: &[u8],
+        now: u64,
+    ) -> Result<(), Error> {
+        self.payload_inner(key, token, seq, Some(ack), data, now)
+    }
+
+    fn payload_inner(
+        &mut self,
+        key: &FlowKey,
+        token: Token,
+        seq: u32,
+        ack: Option<u32>,
+        data: &[u8],
+        now: u64,
+    ) -> Result<(), Error> {
         self.advance(now)?;
         let a = self.active(key, token)?;
-        if a.phase != Phase::Established {
-            if !data.is_empty() {
-                self.retire(key, now);
+        let expected_ack = match a.phase {
+            Phase::Established {
+                initial_server_next,
+            } => initial_server_next,
+            _ => {
+                if !data.is_empty() {
+                    self.retire(key, now);
+                }
+                return Err(Error::WrongState);
             }
-            return Err(Error::WrongState);
+        };
+        if ack.is_some_and(|ack| ack != expected_ack) {
+            self.retire(key, now);
+            return Err(Error::UnexpectedAck);
         }
         if let Err(e) = a.prefix.insert(seq, data) {
             self.retire(key, now);
@@ -267,7 +337,7 @@ impl Connections {
     pub fn evidence(&mut self, key: &FlowKey, token: Token, now: u64) -> Result<Evidence, Error> {
         self.advance(now)?;
         let a = self.active(key, token)?;
-        if a.phase != Phase::Established {
+        if !matches!(a.phase, Phase::Established { .. }) {
             return Err(Error::WrongState);
         }
         a.prefix.evidence().map_err(Error::Prefix)

@@ -1,6 +1,7 @@
 use crate::capture::CapturePlan;
 use crate::catalog::Catalog;
 use crate::layout::AppPaths;
+use crate::profiles::Profiles;
 use crate::selection::{atomic_write, Selection, PROTECTED_BROWSERS};
 use crate::session_plan::SessionPlan;
 use crate::strategy::Strategy;
@@ -135,6 +136,15 @@ impl Store {
             return Err(warning.clone());
         }
         SessionPlan::from_snapshot(self.selection.snapshot(&self.catalog, strategy)?)
+    }
+
+    /// Снимок выбранного профиля и текущих целей. Вызывающий код должен
+    /// сериализовать одновременное изменение профиля и выбора до возврата.
+    pub fn prepare_selected_session(&self, profiles: &Profiles) -> Result<SessionPlan, String> {
+        let strategy = profiles
+            .selected()
+            .ok_or("Стратегия не выбрана или недоступна")?;
+        self.prepare_session(strategy)
     }
 
     /// Только снимок параметров для диагностики, без доменных имён в результатах.

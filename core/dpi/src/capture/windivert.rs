@@ -1,5 +1,6 @@
 //! Пассивный Sniffer и отдельный активный DivertChannel (требует WinDivertSend).
 //! Запуск возможен лишь явным вызовом open, требует админправа и может установить драйвер.
+use super::io_guard::{HandleIo, Operation};
 use super::CapturePlan;
 use crate::flow::wire::{self, FlowEvent, RawAddress};
 use std::ffi::{c_char, c_void, CString, OsStr};
@@ -7,7 +8,6 @@ use std::io;
 use std::os::windows::ffi::OsStrExt;
 use std::path::Path;
 use std::ptr;
-use std::sync::Mutex;
 
 const SNIFF_RECV_ONLY: u64 = 0x0001 | 0x0004;
 const NETWORK_LAYER: i32 = 0;
@@ -19,12 +19,13 @@ const LOAD_LIBRARY_SEARCH_SYSTEM32: u32 = 0x0000_0800;
 
 pub use super::address::WinDivertAddress;
 
-type Handle = *mut c_void;
-type OpenFn = unsafe extern "C" fn(*const c_char, i32, i16, u64) -> Handle;
-type RecvFn = unsafe extern "C" fn(Handle, *mut c_void, u32, *mut u32, *mut c_void) -> i32;
+pub(super) type Handle = *mut c_void;
+pub(super) type OpenFn = unsafe extern "C" fn(*const c_char, i32, i16, u64) -> Handle;
+pub(super) type RecvFn =
+    unsafe extern "C" fn(Handle, *mut c_void, u32, *mut u32, *mut c_void) -> i32;
 type SendFn = unsafe extern "C" fn(Handle, *const c_void, u32, *mut u32, *const c_void) -> i32;
-type ShutdownFn = unsafe extern "C" fn(Handle, i32) -> i32;
-type CloseFn = unsafe extern "C" fn(Handle) -> i32;
+pub(super) type ShutdownFn = unsafe extern "C" fn(Handle, i32) -> i32;
+pub(super) type CloseFn = unsafe extern "C" fn(Handle) -> i32;
 
 #[link(name = "kernel32")]
 extern "system" {
@@ -33,9 +34,9 @@ extern "system" {
     fn FreeLibrary(module: Handle) -> i32;
 }
 
-struct Library(Handle);
+pub(super) struct Library(Handle);
 impl Library {
-    fn load(path: &Path) -> io::Result<Self> {
+    pub(super) fn load(path: &Path) -> io::Result<Self> {
         let absolute = path.canonicalize()?;
         if absolute.file_name() != Some(OsStr::new("WinDivert.dll")) {
             return Err(io::Error::new(
@@ -63,7 +64,7 @@ impl Library {
         }
         Ok(Self(module))
     }
-    fn symbol(&self, name: &'static [u8]) -> io::Result<*mut c_void> {
+    pub(super) fn symbol(&self, name: &'static [u8]) -> io::Result<*mut c_void> {
         let address = unsafe { GetProcAddress(self.0, name.as_ptr().cast()) };
         if address.is_null() {
             Err(io::Error::last_os_error())
@@ -87,21 +88,8 @@ pub struct Sniffer {
     recv: RecvFn,
     shutdown_fn: ShutdownFn,
     close: CloseFn,
-    io_state: Mutex<IoState>,
+    io_state: HandleIo,
     _library: Library,
-}
-
-#[derive(Default)]
-struct IoState {
-    in_flight: usize,
-    close_attempted: bool,
-}
-struct IoGuard<'a>(&'a Mutex<IoState>);
-impl Drop for IoGuard<'_> {
-    fn drop(&mut self) {
-        let mut state = self.0.lock().unwrap_or_else(|p| p.into_inner());
-        state.in_flight -= 1;
-    }
 }
 
 // Shutdown(RECV) запрещает новую очередь, но уже поставленные события ещё
@@ -113,6 +101,12 @@ unsafe impl Sync for Sniffer {}
 impl Sniffer {
     pub fn open(dll_path: &Path, plan: &CapturePlan) -> io::Result<Self> {
         Self::open_inner(dll_path, plan.filter(), NETWORK_LAYER)
+    }
+
+    /// SNIFF + RECV_ONLY: получаем копии TCP на web-портах обоих направлений,
+    /// в том числе от невыбранных приложений. Не меняет и не отправляет пакеты.
+    pub fn open_tcp_metadata(dll_path: &Path) -> io::Result<Self> {
+        Self::open_inner(dll_path, super::ACTIVE_TCP_WEB, NETWORK_LAYER)
     }
 
     fn open_inner(dll_path: &Path, filter_text: &str, layer: i32) -> io::Result<Self> {
@@ -140,50 +134,23 @@ impl Sniffer {
             recv,
             shutdown_fn,
             close,
-            io_state: Mutex::new(IoState::default()),
+            io_state: HandleIo::default(),
             _library: library,
         })
     }
 
-    fn begin_io(&self) -> io::Result<IoGuard<'_>> {
-        let mut state = self
-            .io_state
-            .lock()
-            .map_err(|_| io::Error::other("Состояние WinDivert недоступно"))?;
-        if state.close_attempted {
-            return Err(io::Error::other("WinDivert уже закрывается или закрыт"));
-        }
-        state.in_flight = state
-            .in_flight
-            .checked_add(1)
-            .ok_or_else(|| io::Error::other("Слишком много операций WinDivert"))?;
-        drop(state);
-        Ok(IoGuard(&self.io_state))
+    fn begin_io(&self) -> io::Result<Operation<'_>> {
+        self.io_state.begin()
     }
 
-    /// Однократная попытка закрытия; не допускается при выполняющемся I/O.
-    /// Ошибка означает неизвестное состояние handle: повтор автоматически не делается.
+    /// Однократная попытка закрытия, только после завершения I/O.
     pub fn close_checked(&self) -> io::Result<()> {
-        {
-            let mut state = self
-                .io_state
-                .lock()
-                .map_err(|_| io::Error::other("Состояние WinDivert недоступно"))?;
-            if state.close_attempted {
-                return Err(io::Error::other("Закрытие WinDivert уже запрашивалось"));
+        self.io_state.close_checked(|| {
+            if unsafe { (self.close)(self.handle) } == 0 {
+                return Err(io::Error::last_os_error());
             }
-            if state.in_flight != 0 {
-                return Err(io::Error::new(
-                    io::ErrorKind::WouldBlock,
-                    "Операции WinDivert ещё выполняются",
-                ));
-            }
-            state.close_attempted = true;
-        }
-        if unsafe { (self.close)(self.handle) } == 0 {
-            return Err(io::Error::last_os_error());
-        }
-        Ok(())
+            Ok(())
+        })
     }
 
     /// Блокируется до получения копии пакета или shutdown. Буфер не записывается на диск.
@@ -213,6 +180,35 @@ impl Sniffer {
         Ok(packet)
     }
 
+    /// Получает копию и WINDIVERT_ADDRESS. Вызывающий обязан отбросить байты
+    /// после агрегирования; отсутствие событий не доказывает отсутствие потерь.
+    pub fn receive_with_address(&self) -> io::Result<(Vec<u8>, WinDivertAddress)> {
+        let _operation = self.begin_io()?;
+        let mut packet = vec![0u8; MAX_PACKET];
+        let mut length = 0u32;
+        let mut address = WinDivertAddress::default();
+        let result = unsafe {
+            (self.recv)(
+                self.handle,
+                packet.as_mut_ptr().cast(),
+                MAX_PACKET as u32,
+                &mut length,
+                (&mut address as *mut WinDivertAddress).cast(),
+            )
+        };
+        if result == 0 {
+            return Err(io::Error::last_os_error());
+        }
+        if length as usize > packet.len() {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                "Некорректная длина пакета",
+            ));
+        }
+        packet.truncate(length as usize);
+        Ok((packet, address))
+    }
+
     /// Можно вызвать из другого потока для завершения ожидающего receive.
     pub fn shutdown(&self) -> io::Result<()> {
         let _operation = self.begin_io()?;
@@ -224,13 +220,9 @@ impl Sniffer {
 }
 impl Drop for Sniffer {
     fn drop(&mut self) {
-        let state = self.io_state.get_mut().unwrap_or_else(|p| p.into_inner());
-        if !state.close_attempted {
-            state.close_attempted = true;
-            unsafe {
-                (self.close)(self.handle);
-            }
-        }
+        self.io_state.close_on_drop(|| unsafe {
+            (self.close)(self.handle);
+        });
     }
 }
 
@@ -280,6 +272,7 @@ pub struct DivertChannel {
     send: SendFn,
     shutdown_fn: ShutdownFn,
     close: CloseFn,
+    io_state: HandleIo,
     _library: Library,
 }
 
@@ -318,11 +311,13 @@ impl DivertChannel {
             send,
             shutdown_fn,
             close,
+            io_state: HandleIo::default(),
             _library: library,
         })
     }
 
     pub fn receive(&self) -> io::Result<(Vec<u8>, WinDivertAddress)> {
+        let _operation = self.io_state.begin()?;
         let mut packet = vec![0u8; MAX_PACKET];
         let mut length = 0u32;
         let mut addr = WinDivertAddress::default();
@@ -349,6 +344,7 @@ impl DivertChannel {
     }
 
     pub fn send(&self, packet: &[u8], addr: &WinDivertAddress) -> io::Result<u32> {
+        let _operation = self.io_state.begin()?;
         let mut sent = 0u32;
         let ok = unsafe {
             (self.send)(
@@ -366,18 +362,28 @@ impl DivertChannel {
     }
 
     pub fn shutdown(&self) -> io::Result<()> {
+        let _operation = self.io_state.begin()?;
         if unsafe { (self.shutdown_fn)(self.handle, SHUTDOWN_RECV) } == 0 {
             return Err(io::Error::last_os_error());
         }
         Ok(())
     }
+    /// Закрытие разрешено только после завершения receive, send и shutdown.
+    pub fn close_checked(&self) -> io::Result<()> {
+        self.io_state.close_checked(|| {
+            if unsafe { (self.close)(self.handle) } == 0 {
+                return Err(io::Error::last_os_error());
+            }
+            Ok(())
+        })
+    }
 }
 
 impl Drop for DivertChannel {
     fn drop(&mut self) {
-        unsafe {
+        self.io_state.close_on_drop(|| unsafe {
             (self.close)(self.handle);
-        }
+        });
     }
 }
 
@@ -409,6 +415,7 @@ mod tests {
             (super::super::FLOW_WEB_AND_DISCORD_VOICE, FLOW_LAYER),
             (super::super::WEB, NETWORK_LAYER),
             (super::super::WEB_AND_DISCORD_VOICE, NETWORK_LAYER),
+            (super::super::ACTIVE_TCP_WEB, NETWORK_LAYER),
         ] {
             let input = CString::new(filter).unwrap();
             let mut error = ptr::null();
@@ -431,6 +438,95 @@ mod tests {
                     .into_owned()
             };
             assert_ne!(ok, 0, "Ошибка фильтра на позиции {position}: {text}");
+        }
+    }
+
+    // Проверка на официальном интерпретаторе DLL без WinDivertOpen и без драйвера.
+    #[test]
+    fn official_filter_evaluator_checks_both_tcp_directions() {
+        #[link(name = "kernel32")]
+        extern "system" {
+            fn SetLastError(code: u32);
+            fn GetLastError() -> u32;
+        }
+        let path = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("driver")
+            .join("WinDivert.dll");
+        let library = Library::load(&path).unwrap();
+        type EvalFn =
+            unsafe extern "C" fn(*const c_char, *const c_void, u32, *const WinDivertAddress) -> i32;
+        let eval: EvalFn =
+            unsafe { std::mem::transmute(library.symbol(b"WinDivertHelperEvalFilter\0").unwrap()) };
+        let filter = CString::new(super::super::ACTIVE_TCP_WEB).unwrap();
+        fn packet(ipv6: bool, protocol: u8, src: u16, dst: u16) -> Vec<u8> {
+            let len = if ipv6 { 60 } else { 40 };
+            let mut p = vec![0u8; len];
+            let tcp = if ipv6 {
+                p[0] = 0x60;
+                p[4..6].copy_from_slice(&20u16.to_be_bytes());
+                p[6] = protocol;
+                p[8] = 0x20;
+                p[23] = 1;
+                p[24] = 0x20;
+                p[39] = 2;
+                40
+            } else {
+                p[0] = 0x45;
+                p[2..4].copy_from_slice(&40u16.to_be_bytes());
+                p[8] = 64;
+                p[9] = protocol;
+                p[12..16].copy_from_slice(&[192, 0, 2, 1]);
+                p[16..20].copy_from_slice(&[198, 51, 100, 1]);
+                20
+            };
+            p[tcp..tcp + 2].copy_from_slice(&src.to_be_bytes());
+            p[tcp + 2..tcp + 4].copy_from_slice(&dst.to_be_bytes());
+            if protocol == 6 {
+                p[tcp + 12] = 0x50;
+                p[tcp + 13] = 2;
+            }
+            if protocol == 17 {
+                p[tcp + 4..tcp + 6].copy_from_slice(&20u16.to_be_bytes());
+            }
+            p
+        }
+        let matches = |p: &[u8], outbound: bool, loopback: bool, impostor: bool, ipv6: bool| {
+            let addr = WinDivertAddress::for_filter_test(outbound, loopback, impostor, ipv6);
+            unsafe {
+                SetLastError(0);
+                let result = eval(filter.as_ptr(), p.as_ptr().cast(), p.len() as u32, &addr);
+                let error = GetLastError();
+                if result == 0 {
+                    assert_eq!(error, 0, "WinDivertHelperEvalFilter ошибка: {error}");
+                }
+                result != 0
+            }
+        };
+        for ipv6 in [false, true] {
+            for port in [80, 443, 2053, 2083, 2087, 2096, 8443] {
+                let outbound = packet(ipv6, 6, 55000, port);
+                let inbound = packet(ipv6, 6, port, 55000);
+                assert!(matches(&outbound, true, false, false, ipv6));
+                assert!(matches(&inbound, false, false, false, ipv6));
+                assert!(!matches(&outbound, false, false, false, ipv6));
+                assert!(!matches(&inbound, true, false, false, ipv6));
+                assert!(!matches(&outbound, true, true, false, ipv6));
+                assert!(!matches(&outbound, true, false, true, ipv6));
+                assert!(!matches(
+                    &packet(ipv6, 17, 55000, port),
+                    true,
+                    false,
+                    false,
+                    ipv6
+                ));
+            }
+            assert!(!matches(
+                &packet(ipv6, 6, 55000, 8080),
+                true,
+                false,
+                false,
+                ipv6
+            ));
         }
     }
 }

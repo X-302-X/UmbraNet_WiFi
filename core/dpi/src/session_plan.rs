@@ -102,6 +102,20 @@ impl SessionPlan {
         Ok(())
     }
 
+    /// Фильтр захвата не является разрешением изменять попавшие в него пакеты.
+    /// До реализации UDP и привязки процессов отклоняем неподдерживаемый план.
+    pub fn active_capture_filter(&self) -> Result<&'static str, String> {
+        self.check_known_limits()?;
+        Ok(crate::capture::ACTIVE_TCP_WEB)
+    }
+
+    /// Создание двигателя для будущей сессии. Не разрешает открытие канала:
+    /// глобальный guard остаётся обязательным, пока не готов живой pipeline.
+    pub fn make_guarded_engine(&self, auto: Option<AutoHostList>) -> Result<Engine, String> {
+        crate::safety::active_start_guard().map_err(str::to_string)?;
+        self.make_offline_engine(auto)
+    }
+
     /// Только для синтетических офлайн-проверок. Engine остаётся изменяемым и
     /// его публичные низкоуровневые методы сами по себе не защищены guard.
     /// Успех этой функции НЕ означает, что сетевой запуск безопасен.
