@@ -33,6 +33,9 @@ fn batches_are_ordered_idempotent_and_saved_inside_logs() {
         .unwrap();
     let path = j.path().unwrap().to_owned();
     assert_eq!(path.parent().unwrap(), dir.join("logs"));
+    // На Windows блокировка обязательна для других дескрипторов: сначала
+    // завершаем сеанс, затем читаем файл так же, как пользователь после выхода.
+    drop(j);
     let lines: Vec<_> = fs::read_to_string(&path)
         .unwrap()
         .lines()
@@ -44,7 +47,6 @@ fn batches_are_ordered_idempotent_and_saved_inside_logs() {
     assert!(lines
         .iter()
         .all(|s| serde_json::from_str::<serde_json::Value>(s).is_ok()));
-    drop(j);
     fs::remove_dir_all(dir).unwrap();
 }
 #[test]
@@ -67,10 +69,12 @@ fn separate_sessions_do_not_overwrite_each_other() {
     let mut b = JournalStore::new(&dir, false);
     a.append(1, vec![r#"{"value":1}"#.into()]).unwrap();
     b.append(1, vec![r#"{"value":2}"#.into()]).unwrap();
-    assert_ne!(a.path(), b.path());
-    assert!(fs::read_to_string(a.path().unwrap()).unwrap().contains('1'));
-    assert!(fs::read_to_string(b.path().unwrap()).unwrap().contains('2'));
+    let a_path = a.path().unwrap().to_owned();
+    let b_path = b.path().unwrap().to_owned();
+    assert_ne!(a_path, b_path);
     drop((a, b));
+    assert!(fs::read_to_string(a_path).unwrap().contains('1'));
+    assert!(fs::read_to_string(b_path).unwrap().contains('2'));
     fs::remove_dir_all(dir).unwrap();
 }
 
@@ -119,9 +123,8 @@ fn active_session_is_not_deleted_and_cleanup_can_retry() {
     drop(old);
     next.cleanup_previous().unwrap();
     assert!(!old_path.exists());
-    assert!(fs::read_to_string(next.path().unwrap())
-        .unwrap()
-        .contains("recording"));
+    let next_path = next.path().unwrap().to_owned();
     drop(next);
+    assert!(fs::read_to_string(next_path).unwrap().contains("recording"));
     fs::remove_dir_all(dir).unwrap();
 }
