@@ -7,6 +7,9 @@ mod dpi_bridge;
 mod system;
 
 mod appearance;
+mod journal;
+use std::sync::atomic::Ordering;
+use tauri::Manager;
 
 #[tauri::command]
 fn admin_status() -> Result<bool, String> {
@@ -23,7 +26,31 @@ fn main() {
         .manage(dpi_bridge::DpiState::new())
         .manage(dpi_bridge::DiagnosticState::new())
         .manage(dpi_bridge::StrategyState::new())
+        .manage(journal::JournalState::new())
+        .on_window_event(|window, event| {
+            if let tauri::WindowEvent::CloseRequested { api, .. } = event {
+                let state = window.state::<journal::JournalState>();
+                if window.label() == "main"
+                    && state.ready.load(Ordering::Acquire)
+                    && !state.allow_close.load(Ordering::Acquire)
+                {
+                    // JS дождётся сохранения очереди или спросит перед закрытием без неё.
+                    if let Some(webview) = window.app_handle().get_webview_window(window.label()) {
+                        if webview
+                            .eval("window.dispatchEvent(new Event('umbra-journal-close-request'))")
+                            .is_ok()
+                        {
+                            api.prevent_close();
+                        }
+                    }
+                }
+            }
+        })
         .invoke_handler(tauri::generate_handler![
+            journal::journal_write,
+            journal::journal_cleanup,
+            journal::journal_ready,
+            journal::journal_finish_close,
             dpi_bridge::dpi_get,
             dpi_bridge::dpi_apply,
             dpi_bridge::dpi_control_status,

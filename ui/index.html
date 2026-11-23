@@ -124,51 +124,38 @@
       <div class="panel card spaced"><h3>⚡ Генератор и управление</h3><p class="hint">Стратегии будут храниться в папке strtegs_Uz. Генерация и проверка пока не реализованы.</p><div class="button-row"><button class="action action-accent" type="button" disabled>Сгенерировать Uz</button><button class="action" type="button" disabled>Проверить все Uz</button><button class="action" type="button" disabled>Удалить выбранную</button><button class="action" type="button" disabled>Скопировать путь</button></div></div>
       <div class="panel card spaced"><div class="panel-head"><h3>Библиотека Uz</h3><span id="strategy-count" class="panel-note">Выбрано: —</span></div><div id="strategy-list" class="strategy-list" role="listbox" aria-label="Стратегии"><div class="empty-box tall">Чтение стратегий…</div></div><p id="strategy-message" class="hint" role="status" aria-live="polite" hidden></p><div class="button-row"><span id="engine-state" class="panel-note" role="status" aria-live="polite">Движок выключен</span></div><div class="panel-head"><h3>autohostlist</h3><span id="auto-count" class="panel-note">0 доменов</span></div><p class="hint">Экспериментальный список: RST сам по себе не доказывает блокировку. Список не расширяет выбранные цели DPI; активный движок пока отключён.</p><div id="auto-list" class="strategy-list auto-list"></div><div class="button-row"><button id="auto-clear" class="action" type="button" disabled>Очистить список</button></div></div>
     </section>
-    <section class="page" id="logs" aria-labelledby="logs-title" hidden>
-      <div class="page-title journal-heading">
-        <div><p class="eyebrow">UMBRA / ЖУРНАЛ</p><h1 id="logs-title">Логи событий</h1><p class="subtitle">В памяти приложения · ничего не отправляется автоматически</p></div>
-        <span id="journal-state" class="journal-status" role="status">● Запись включена</span>
-      </div>
-      <div class="journal-overview" aria-label="Сводка журнала">
-        <div class="journal-metric"><span>Все события</span><strong id="journal-total">0</strong></div>
-        <div class="journal-metric"><span>Соединения</span><strong id="journal-flows">0</strong></div>
-        <div class="journal-metric"><span>Программа</span><strong id="journal-system">0</strong></div>
-        <div class="journal-metric journal-metric-error"><span>Ошибки</span><strong id="journal-errors">0</strong></div>
-      </div>
-      <div class="panel card journal-panel">
+    <section class="page" id="logs" aria-label="Логи" hidden>
+      <div class="journal-console">
         <div class="journal-toolbar">
-          <input id="journal-search" class="field" type="search" placeholder="🔍 Поиск по событиям" aria-label="Поиск по событиям">
-          <select id="journal-filter" class="field" aria-label="Фильтр событий"><option value="all">Все события</option><option value="error">Ошибки</option><option value="flow">Соединения</option><option value="system">Программа</option></select>
-          <button id="journal-pause" class="action" type="button">⏸ Пауза</button>
-          <button id="journal-clear" class="action" type="button">Очистить</button>
+          <input id="journal-search" class="field" type="search" placeholder="🔍 Поиск по процессу или событию" aria-label="Поиск по процессу или событию">
+          <select id="journal-filter" class="field" aria-label="Категория событий"><option value="all">Все события</option><option value="error">Ошибки</option><option value="flow">Соединения</option><option value="system">Программа</option></select>
         </div>
-        <div class="journal-legend"><span><i class="legend-dot personal"></i>Жёлтый — возможные личные данные</span><span><i class="legend-dot error"></i>Красный — ошибка</span><span id="journal-count" role="status"></span></div>
-        <p class="journal-privacy-note">Жёлтым отмечены известные поля и найденные адреса, пути и имена файлов. Другие личные данные тоже могут встретиться — проверяйте текст перед отправкой.</p>
-        <div class="journal-columns" aria-hidden="true"><span>ВРЕМЯ</span><span>СОБЫТИЕ</span><span>ТИП</span></div>
-        <div id="journal-list" class="journal-list" aria-label="Список событий, новые сверху"></div>
-        <button id="journal-more" class="action journal-more" type="button" hidden>Показать ещё</button>
-        <p class="journal-footnote">Записи остаются в памяти до очистки или закрытия приложения. При паузе новые обычные события не записываются; пассивная проверка может пропустить события. Активный DPI пока отключён; журнал запросов и обнаружение обрывов не подключены.</p>
-        <details class="journal-export">
-          <summary>📋 Подготовить отчёт для копирования</summary>
-          <div class="journal-export-content">
-            <p class="hint">Отчёт включает все сохранённые записи, независимо от фильтра. В сокращённом варианте поля IP и произвольные подробности скрыты, но имена процессов и PID могут оставаться. Проверьте текст перед отправкой.</p>
-            <div class="button-row"><label for="journal-export-mode">Состав отчёта</label><select id="journal-export-mode" class="field"><option value="redacted">Без IP и подробностей</option><option value="full">Подробный — содержит личные данные</option></select><button id="journal-prepare" class="action" type="button">Подготовить</button><button id="journal-copy" class="action action-accent" type="button" disabled>Скопировать</button></div>
-            <textarea id="journal-report" class="field journal-report" readonly aria-label="Предпросмотр отчёта" placeholder="Нажмите «Подготовить»"></textarea><p id="journal-copy-status" class="hint" role="status" aria-live="polite"></p>
-          </div>
-        </details>
+        <div id="journal-list" class="journal-list" tabindex="0" aria-label="Журнал событий, новые сверху"></div>
       </div>
-      <details class="panel card spaced diagnostic-panel">
-        <summary class="diagnostic-summary"><span>🛠 Пассивная диагностика <small>Запускается отдельно</small></span><span id="diagnostic-state" class="diagnostic-state" role="status" aria-live="polite">Не запущена</span></summary>
-        <div class="diagnostic-content">
-          <p class="hint">FLOW-проверка наблюдает новые исходящие соединения на диапазонах портов, включая другие приложения; требуется выбрать цель в «Маршрутизации». Содержимое пакетов не читается. Имя процесса — предварительное совпадение; домены не определяются.</p>
-          <p class="hint">TCP-проверка получает пассивные копии пакетов обоих направлений на web-портах <strong>всех приложений, независимо от выбранных целей</strong>. Для подсчёта временно читаются байты пакетов и метаданные; содержимое, адреса, домены и процессы не записываются в результат или журнал. Пакеты не изменяются. Счётчики не доказывают отсутствие LSO или потерь.</p>
-          <p class="hint">Обе проверки запрашивают остановку через 30 секунд, требуют Windows x64 и прав администратора и могут запустить общий WinDivert. После остановки наш handle закрывается, но выгрузка общего драйвера не гарантируется. При ошибке остановки повторный запуск заблокирован. Это не обход и не проверка голоса.</p>
-          <div class="button-row"><button id="diagnostic-start" class="action action-accent" type="button" disabled>Начать FLOW-проверку</button><button id="diagnostic-tcp-start" class="action" type="button" disabled>Проверить TCP checksum</button><button id="diagnostic-stop" class="action" type="button" disabled>Остановить проверку</button></div>
-          <p id="diagnostic-message" class="diagnostic-message" role="status" aria-live="polite" hidden></p>
-          <div id="diagnostic-flow-stats" class="diagnostic-stats"><div><span>Новые соединения</span><strong id="diagnostic-established">0</strong></div><div><span>Имя процесса получено</span><strong id="diagnostic-identified">0</strong></div><div><span>Предварительно выбранный процесс</span><strong id="diagnostic-selected">0</strong></div><div><span>Процесс не определён</span><strong id="diagnostic-unresolved">0</strong></div></div>
-          <div id="diagnostic-tcp-results" hidden><p class="hint">Только агрегированные счётчики. Поле можно выделить и скопировать вручную; данные не отправляются автоматически.</p><textarea id="diagnostic-tcp-report" class="field journal-report" readonly aria-label="Результат TCP-проверки"></textarea></div>
+      <div class="diagnostic-bar" aria-label="Пассивная диагностика">
+        <button id="diagnostic-start" class="action" type="button" disabled>Проверить соединения</button>
+        <button id="diagnostic-tcp-start" class="action" type="button" disabled>Проверить TCP</button>
+        <button id="diagnostic-stop" class="action" type="button" disabled>Остановить проверку</button>
+        <button id="diagnostic-tcp-open" class="action" type="button" hidden>Результат</button>
+        <span id="diagnostic-state" class="diagnostic-state" role="status" aria-live="polite">Не запущена</span>
+        <span id="diagnostic-message" class="diagnostic-message" role="status" aria-live="polite" hidden></span>
+        <span id="journal-save-status" class="journal-save-status" role="alert" hidden></span>
+        <span id="journal-action-status" class="journal-action-status" role="status" aria-live="polite"></span>
+        <button id="journal-export-button" class="action journal-export-button" type="button" aria-haspopup="menu" aria-expanded="false">Копировать</button>
+      </div>
+      <dialog id="journal-export-dialog" class="journal-dialog">
+        <div class="journal-dialog-content">
+          <div class="journal-dialog-head"><strong id="journal-export-title">Отчёт</strong><button id="journal-export-close" class="action" type="button" aria-label="Закрыть">✕</button></div>
+          <textarea id="journal-report" class="field journal-report" readonly aria-label="Предпросмотр отчёта"></textarea>
+          <div class="journal-dialog-actions"><span id="journal-copy-status" role="status" aria-live="polite"></span><button id="journal-copy" class="action action-accent" type="button">Скопировать</button></div>
         </div>
-      </details>
+      </dialog>
+      <dialog id="diagnostic-tcp-dialog" class="journal-dialog">
+        <div class="journal-dialog-content">
+          <div class="journal-dialog-head"><strong id="diagnostic-result-title">Результат проверки</strong><button id="diagnostic-tcp-close" class="action" type="button" aria-label="Закрыть">✕</button></div>
+          <textarea id="diagnostic-tcp-report" class="field journal-report" readonly aria-label="Результат проверки"></textarea>
+        </div>
+      </dialog>
     </section>
     <section class="page" id="settings" aria-labelledby="settings-title" hidden>
       <p class="eyebrow">UMBRA / НАСТРОЙКИ</p><h1 id="settings-title">Сделай пространство своим</h1><p class="subtitle">Поведение приложения и персонализация.</p>
@@ -225,6 +212,10 @@
     </div>
   </div>
   <div id="announcer" class="sr-only" aria-live="polite"></div>
+</div>
+<div id="journal-menu" class="journal-menu" role="menu" aria-label="Варианты копирования журнала" hidden>
+  <button id="journal-export-full" type="button" role="menuitem">Со всеми данными</button>
+  <button id="journal-export-redacted" type="button" role="menuitem">Без IP, процессов и PID</button>
 </div>
 </body>
 </html>

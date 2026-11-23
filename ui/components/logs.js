@@ -4,75 +4,139 @@
   const list = document.querySelector("#journal-list");
   const search = document.querySelector("#journal-search");
   const filter = document.querySelector("#journal-filter");
-  const count = document.querySelector("#journal-count");
-  const state = document.querySelector("#journal-state");
-  const pauseButton = document.querySelector("#journal-pause");
+  const menu = document.querySelector("#journal-menu");
+  const exportButton = document.querySelector("#journal-export-button");
+  const actionStatus = document.querySelector("#journal-action-status");
+  const saveStatus = document.querySelector("#journal-save-status");
+  const invoke = window.__TAURI_INTERNALS__?.invoke;
+  const dialog = document.querySelector("#journal-export-dialog");
+  const title = document.querySelector("#journal-export-title");
   const report = document.querySelector("#journal-report");
-  const mode = document.querySelector("#journal-export-mode");
   const copy = document.querySelector("#journal-copy");
   const copyStatus = document.querySelector("#journal-copy-status");
-  const metrics = {
-    total: document.querySelector("#journal-total"),
-    flow: document.querySelector("#journal-flows"),
-    system: document.querySelector("#journal-system"),
-    error: document.querySelector("#journal-errors")
-  };
   const entries = [];
-  const BATCH_SIZE = 200;
-  let displayLimit = BATCH_SIZE;
-  const totals = {flow: 0, system: 0, error: 0};
-  const more = document.querySelector("#journal-more");
   let recording = true;
   let renderPending = false;
   let session = null;
   let lastSequence = 0;
   let skipNextView = false;
 
+  // Очередь принадлежит только приложению Tauri, а не браузерному предпросмотру.
+  const pending = [];
+  let sessionId = null, batchNumber = 1, writing = null, retryTimer = null, closing = false, cleanupFailed = false;
+  function saveError(error) {
+    saveStatus.textContent = `Журнал не сохранён в logs: ${String(error).slice(0, 300)}. Записи остаются в окне; можно скопировать их вручную.`;
+    saveStatus.hidden = false;
+  }
+  function clearSaveError() { saveStatus.hidden = true; saveStatus.textContent = ""; }
+  function scheduleSave(delay = 0) {
+    if (typeof invoke !== "function" || retryTimer !== null || writing || closing) return;
+    retryTimer = setTimeout(() => { retryTimer = null; void flush(); }, delay);
+  }
+  async function flush() {
+    if (writing) return writing;
+    writing = (async () => {
+      try {
+        if (sessionId === null) sessionId = await invoke("journal_ready");
+        while (pending.length) {
+          const records = [];
+          let bytes = 0;
+          const encoder = new TextEncoder();
+          for (const record of pending) {
+            const size = encoder.encode(record).length;
+            if (size > 2 * 1024 * 1024) throw new Error("Одна запись превышает 2 МБ");
+            if (records.length === 64 || bytes + size > 2 * 1024 * 1024) break;
+            records.push(record); bytes += size;
+          }
+          await invoke("journal_write", {session: sessionId, batch: batchNumber, records});
+          pending.splice(0, records.length);
+          batchNumber++;
+        }
+        try {
+          await invoke("journal_cleanup", {session: sessionId});
+          cleanupFailed = false;
+          clearSaveError();
+        } catch (error) {
+          cleanupFailed = true;
+          saveStatus.textContent = `Не удалось удалить журнал прошлого сеанса: ${String(error).slice(0, 300)}. Новый журнал сохраняется; повторим попытку.`;
+          saveStatus.hidden = false;
+        }
+        return true;
+      } catch (error) {
+        saveError(error);
+        return false;
+      }
+    })();
+    const result = await writing;
+    writing = null;
+    if ((pending.length || cleanupFailed) && !closing) scheduleSave(result && !cleanupFailed ? 0 : 5000);
+    return result;
+  }
+  function queueForFile(entry) {
+    if (typeof invoke !== "function") return;
+    pending.push(JSON.stringify({время: time(entry.timestamp), тип: entry.kind, событие: summary(entry, true)}));
+    // Ошибка удаления старого файла не должна задерживать запись новых событий.
+    if (cleanupFailed && retryTimer !== null) { clearTimeout(retryTimer); retryTimer = null; }
+    scheduleSave();
+  }
+  if (typeof invoke === "function") {
+    window.addEventListener("umbra-journal-close-request", async () => {
+      if (closing) return;
+      closing = true;
+      if (retryTimer !== null) { clearTimeout(retryTimer); retryTimer = null; }
+      // Не зависаем при отказавшем IPC; перед потерей данных спрашиваем пользователя.
+      let timeout;
+      const ok = await Promise.race([flush(), new Promise(resolve => { timeout = setTimeout(() => resolve(false), 5000); })]);
+      clearTimeout(timeout);
+      if ((!ok || pending.length) && !window.confirm("Не удалось сохранить все записи в папку logs. Закрыть приложение без них? Можно отменить и скопировать журнал вручную.")) {
+        closing = false;
+        scheduleSave(5000);
+        return;
+      }
+      try { await invoke("journal_finish_close"); }
+      catch (error) { closing = false; saveError(`Не удалось закрыть окно: ${error}`); scheduleSave(5000); }
+    });
+  }
+
   function append(kind, text, details = null, timestamp = Date.now()) {
-    entries.push({kind, text: String(text), details, timestamp});
-    if (Object.hasOwn(totals, kind)) totals[kind]++;
+    const entry = {kind, text: String(text), details, timestamp};
+    entries.push(entry);
+    queueForFile(entry);
     if (!renderPending) {
       renderPending = true;
-      requestAnimationFrame(() => { renderPending = false; render(); });
+      requestAnimationFrame(() => { renderPending = false; render(true); });
     }
   }
   function add(kind, text, details = null, timestamp = Date.now()) {
     if (recording) append(kind, text, details, timestamp);
   }
-  // Нажатие Stop и ошибки видны даже при ручной паузе.
+  // Нажатие Stop и ошибки видны даже после предыдущей остановки записи.
   function addRequired(kind, text) { append(kind, text); }
   function startForDpi() {
+    if (!recording) skipNextView = true;
     recording = true;
     append("system", "Запись журнала включена после запуска DPI.");
-    render();
   }
   function stopAfterDpi() {
     append("system", "Запись журнала остановлена после остановки DPI.");
     recording = false;
-    render();
   }
-  function processName(name, redacted) {
-    if (!name) return "не определён";
-    // Имя процесса также может содержать личные данные; в сокращённом отчёте
-    // не выдаём похожие на адрес/путь значения под видом имени программы.
-    if (redacted && (/\d{1,3}(?:\.\d{1,3}){3}/.test(name) || /[:\\/@]/.test(name))) return "[имя скрыто]";
-    return name;
+  function processName(name) {
+    return name || "не определён";
   }
   function endpoint(ip, port) {
     if (!ip) return "неизвестно";
     const host = ip.includes(":") ? `[${ip}]` : ip;
     return port == null ? host : `${host}:${port}`;
   }
-  // В сокращённый отчёт попадают только заранее известные системные сообщения.
-  // Произвольная ошибка или текст системы могут содержать любые личные данные.
+  // Свободный текст может содержать любые адреса, пути или личные сведения.
+  // Сокращённый вариант включает только известные безопасные системные строки.
   const SAFE_SYSTEM_MESSAGES = new Set([
-    "Приложение открыто. Журнал хранится только в памяти.",
+    "Приложение открыто.",
     "Запись журнала включена после запуска DPI.",
     "Запись журнала остановлена после остановки DPI.",
     "Пользователь нажал «Старт» DPI.",
     "Пользователь нажал «Стоп» DPI.",
-    "Пользователь приостановил журнал.",
-    "Пользователь продолжил журнал; события за время паузы недоступны.",
     "Пользователь запустил пассивную FLOW-проверку.",
     "Пользователь запустил пассивную TCP-проверку.",
     "Пользователь запросил остановку пассивной проверки.",
@@ -87,9 +151,12 @@
     if (e.kind === "error") return full ? e.text : "Ошибка: подробности скрыты";
     if (e.kind !== "flow") return full || SAFE_SYSTEM_MESSAGES.has(e.text) ? e.text : "Системное событие: подробности скрыты";
     const d = e.details || {};
-    let text = `${d.established ? "Новое соединение" : "Соединение закрыто (не обязательно обрыв)"} · ${processName(d.process, !full)} · PID ${d.pid ?? "—"} · ${d.protocol || "протокол неизвестен"} · порт ${d.remote_port ?? "—"}`;
+    const event = d.established ? "Новое соединение" : "Соединение закрыто (не обязательно обрыв)";
+    // В сокращённый отчёт не попадают произвольные значения из события.
+    if (!full) return `${event} · ${["TCP", "UDP"].includes(d.protocol) ? d.protocol : "протокол неизвестен"}`;
+    let text = `${event} · ${processName(d.process)} · PID ${d.pid ?? "—"} · ${d.protocol || "протокол неизвестен"} · порт ${d.remote_port ?? "—"}`;
     if (d.selected_process) text += " · предварительно выбранный процесс";
-    if (full && (d.local_ip || d.remote_ip)) text += ` · ${endpoint(d.local_ip, d.local_port)} → ${endpoint(d.remote_ip, d.remote_port)}`;
+    if (d.local_ip || d.remote_ip) text += ` · ${endpoint(d.local_ip, d.local_port)} → ${endpoint(d.remote_ip, d.remote_port)}`;
     return text;
   }
   function time(ms, short = false) {
@@ -100,12 +167,11 @@
   function sensitive(container, text) {
     const part = document.createElement("span");
     part.className = "journal-sensitive";
-    part.title = "Может содержать личные данные";
     part.textContent = String(text);
     container.append(part);
   }
-  // Это только подсветка наиболее типичных шаблонов, не надёжный детектор
-  // всех личных данных. Все узлы создаются через textContent, без HTML.
+  // Подсветка типичных шаблонов не гарантирует обнаружение всех личных данных.
+  // Текст никогда не интерпретируется как HTML.
   function highlightedText(container, value) {
     const text = String(value);
     const pattern = /(?:[a-z][a-z0-9+.-]*:\/\/[^\s<>"']+|[a-z]:[\\/][^\r\n<>|"']+|\\\\[^\s<>|"']+(?:[\\/][^\r\n<>|"']+)?|\b[\w.+-]+@[\w.-]+\.[a-z]{2,}\b|\b(?:\d{1,3}\.){3}\d{1,3}\b|(?:[a-f0-9]{0,4}:){2,}[a-f0-9:.%]*|\b[\w.-]+\.exe\b|\b(?:[a-z0-9-]+\.)+[a-z]{2,}\b)/gi;
@@ -139,7 +205,7 @@
       const event = document.createElement("span");
       event.textContent = d.established ? "Новое соединение · " : "Соединение закрыто (не обязательно обрыв) · ";
       content.append(event);
-      if (d.process) sensitive(content, processName(d.process, false));
+      if (d.process) sensitive(content, processName(d.process));
       else { const missing = document.createElement("span"); missing.textContent = "процесс не определён"; content.append(missing); }
       if (d.pid != null) sensitive(content, ` · PID ${d.pid}`);
       const info = document.createElement("span");
@@ -147,40 +213,30 @@
       content.append(info);
       if (d.local_ip || d.remote_ip) sensitive(content, ` · ${endpoint(d.local_ip, d.local_port)} → ${endpoint(d.remote_ip, d.remote_port)}`);
     } else highlightedText(content, item.text);
-    const kind = document.createElement("span");
-    kind.className = "journal-kind";
-    kind.textContent = item.kind === "error" ? "✕ ОШИБКА" : item.kind === "flow" ? "СОЕДИНЕНИЕ" : "ПРОГРАММА";
-    row.append(stamp, content, kind);
+    row.append(stamp, content);
     return row;
   }
-  function render() {
+  function render(preservePosition = false) {
+    const oldTop = list.scrollTop;
+    const oldHeight = list.scrollHeight;
     const query = search.value.trim().toLocaleLowerCase("ru");
     const fragment = document.createDocumentFragment();
-    const stats = {total: entries.length, ...totals};
-    let matched = 0, shown = 0;
-    // Новые записи сверху; старые сохраняются до очистки или закрытия приложения.
+    let shown = 0;
     for (let i = entries.length - 1; i >= 0; i--) {
       const item = entries[i];
       if (filter.value !== "all" && item.kind !== filter.value) continue;
       if (query && !summary(item, true).toLocaleLowerCase("ru").includes(query)) continue;
-      matched++;
-      if (shown >= displayLimit) continue;
-      fragment.append(makeRow(item));
-      shown++;
+      fragment.append(makeRow(item)); shown++;
     }
     list.replaceChildren(fragment);
     if (!shown) {
-      const empty = document.createElement("div");
-      empty.className = "journal-empty";
-      empty.textContent = query || filter.value !== "all" ? "Ничего не найдено. Измените поиск или фильтр." : "Пока нет событий.\nЗдесь появятся действия программы и результаты проверки.";
+      const empty = document.createElement("div"); empty.className = "journal-empty";
+      empty.textContent = query || filter.value !== "all" ? "Ничего не найдено" : "Пока нет событий";
       list.append(empty);
     }
-    for (const [key, node] of Object.entries(metrics)) node.textContent = String(stats[key]);
-    count.textContent = `Показано: ${shown}${matched > shown ? ` из ${matched}` : ""}`;
-    more.hidden = shown >= matched;
-    state.textContent = recording ? "● Запись включена" : "⏸ Запись на паузе";
-    state.classList.toggle("is-paused", !recording);
-    pauseButton.textContent = recording ? "⏸ Пауза" : "▶ Продолжить";
+    // При чтении старых событий новые строки не должны сбрасывать позицию.
+    if (preservePosition && oldTop > 2) list.scrollTop = oldTop + Math.max(0, list.scrollHeight - oldHeight);
+    else list.scrollTop = 0;
   }
   function addFlowView(view) {
     if (!view || !view.session_id) return;
@@ -201,41 +257,67 @@
     }
   }
   window.umbraJournal = { add, addRequired, addFlowView, startForDpi, stopAfterDpi };
-  search.addEventListener("input", () => { displayLimit = BATCH_SIZE; render(); });
-  filter.addEventListener("change", () => { displayLimit = BATCH_SIZE; render(); });
-  more.addEventListener("click", () => { displayLimit += BATCH_SIZE; render(); });
-  pauseButton.addEventListener("click", () => {
-    if (recording) { add("system", "Пользователь приостановил журнал."); recording = false; }
-    else { recording = true; skipNextView = true; add("system", "Пользователь продолжил журнал; события за время паузы недоступны."); }
-    render();
+  search.addEventListener("input", () => render());
+  filter.addEventListener("change", () => render());
+
+  function closeMenu() {
+    menu.hidden = true;
+    exportButton.setAttribute("aria-expanded", "false");
+  }
+  function openMenu(x, y, above = false) {
+    menu.hidden = false;
+    const box = menu.getBoundingClientRect();
+    menu.style.left = `${Math.max(4, Math.min(x, window.innerWidth - box.width - 4))}px`;
+    menu.style.top = `${Math.max(4, Math.min(above ? y - box.height - 4 : y, window.innerHeight - box.height - 4))}px`;
+    exportButton.setAttribute("aria-expanded", "true");
+  }
+  exportButton.addEventListener("click", () => {
+    if (!menu.hidden) { closeMenu(); return; }
+    const box = exportButton.getBoundingClientRect();
+    openMenu(box.left, box.top, true);
+    document.querySelector("#journal-export-full").focus();
   });
-  document.querySelector("#journal-clear").addEventListener("click", async () => {
-    try {
-      if (typeof window.__TAURI_INTERNALS__?.invoke === "function") await window.umbraDiagnosticClear();
-      entries.length = 0; totals.flow = 0; totals.system = 0; totals.error = 0;
-      displayLimit = BATCH_SIZE; report.value = ""; copy.disabled = true;
-      copyStatus.textContent = "Журнал и сохранённые события проверки очищены.";
-    } catch (error) {
-      copyStatus.textContent = `Не удалось очистить события проверки: ${String(error)}`;
+  list.addEventListener("contextmenu", event => { event.preventDefault(); openMenu(event.clientX, event.clientY); });
+  list.addEventListener("keydown", event => {
+    if (event.key === "ContextMenu" || (event.shiftKey && event.key === "F10")) {
+      event.preventDefault(); const box = list.getBoundingClientRect(); openMenu(box.left + 15, box.top + 15);
+      document.querySelector("#journal-export-redacted").focus();
     }
-    render();
   });
-  mode.addEventListener("change", () => { report.value = ""; copy.disabled = true; copyStatus.textContent = "Подготовьте отчёт заново."; });
-  document.querySelector("#journal-prepare").addEventListener("click", () => {
-    const full = mode.value === "full";
-    report.value = [`UmbraNet WiFi — журнал (${full ? "подробный, содержит личные данные" : "без полей IP и произвольных подробностей"})`, `Записей: ${entries.length}. Все записи независимо от фильтра.`, "Имена программ и PID могут быть личными данными. Пассивная проверка не подтверждает обход, домены или голос.", ...entries.map(e => `[${time(e.timestamp)}] ${summary(e, full)}`)].join("\n");
-    copy.disabled = false; copyStatus.textContent = "Проверьте текст перед отправкой.";
-  });
+  document.addEventListener("click", event => { if (!menu.contains(event.target) && !exportButton.contains(event.target)) closeMenu(); });
+  document.addEventListener("keydown", event => { if (event.key === "Escape" && !menu.hidden) { closeMenu(); exportButton.focus(); } });
+  let statusTimer;
+  async function prepare(full) {
+    closeMenu();
+    title.textContent = full ? "Со всеми данными · содержит личные данные" : "Без IP, процессов и PID";
+    report.value = [`UmbraNet WiFi — журнал (${full ? "со всеми данными" : "без IP, процессов, PID, портов и произвольных подробностей"})`, `Записей: ${entries.length}. Все записи независимо от фильтра.`, full ? "Отчёт содержит личные данные." : "Время и тип событий остаются и тоже могут быть чувствительными. Полная анонимность не гарантируется.", "Пассивная проверка не подтверждает обход, домены или голос.", ...entries.map(e => `[${time(e.timestamp)}] ${summary(e, full)}`)].join("\n");
+    copyStatus.textContent = "";
+    clearTimeout(statusTimer);
+    try {
+      if (!navigator.clipboard?.writeText) throw new Error("clipboard unavailable");
+      await navigator.clipboard.writeText(report.value);
+      actionStatus.textContent = "Скопировано";
+      statusTimer = setTimeout(() => { actionStatus.textContent = ""; }, 3000);
+    } catch {
+      actionStatus.textContent = "";
+      if (!dialog.open) dialog.showModal();
+      report.focus(); report.select();
+      copyStatus.textContent = "Нажмите Ctrl+C";
+    }
+  }
+  document.querySelector("#journal-export-redacted").addEventListener("click", () => prepare(false));
+  document.querySelector("#journal-export-full").addEventListener("click", () => prepare(true));
+  document.querySelector("#journal-export-close").addEventListener("click", () => dialog.close());
   copy.addEventListener("click", async () => {
     try {
       if (!navigator.clipboard?.writeText) throw new Error("clipboard unavailable");
       await navigator.clipboard.writeText(report.value);
-      copyStatus.textContent = "Отчёт скопирован. Отправка выполняется только вами.";
+      copyStatus.textContent = "Скопировано";
     } catch {
       report.focus(); report.select();
-      copyStatus.textContent = "Автоматическое копирование недоступно. Текст выделен — нажмите Ctrl+C.";
+      copyStatus.textContent = "Нажмите Ctrl+C";
     }
   });
-  add("system", "Приложение открыто. Журнал хранится только в памяти.");
+  add("system", "Приложение открыто.");
   render();
 })();

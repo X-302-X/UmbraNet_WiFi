@@ -4,18 +4,13 @@
   const invoke = window.__TAURI_INTERNALS__?.invoke;
   const start = document.querySelector("#diagnostic-start");
   const tcpStart = document.querySelector("#diagnostic-tcp-start");
-  const flowStats = document.querySelector("#diagnostic-flow-stats");
-  const tcpResults = document.querySelector("#diagnostic-tcp-results");
+  const tcpOpen = document.querySelector("#diagnostic-tcp-open");
+  const tcpDialog = document.querySelector("#diagnostic-tcp-dialog");
   const tcpReport = document.querySelector("#diagnostic-tcp-report");
+  const resultTitle = document.querySelector("#diagnostic-result-title");
   const stop = document.querySelector("#diagnostic-stop");
   const phase = document.querySelector("#diagnostic-state");
   const message = document.querySelector("#diagnostic-message");
-  const counts = {
-    established: document.querySelector("#diagnostic-established"),
-    identified: document.querySelector("#diagnostic-identified"),
-    selected_process: document.querySelector("#diagnostic-selected"),
-    unresolved: document.querySelector("#diagnostic-unresolved")
-  };
   const labels = {
     idle: "Не запущена", starting: "Запуск…", running: "Выполняется",
     stopping: "Остановка…", finished: "Завершена", error: "Ошибка", stop_failed: "Ошибка остановки"
@@ -51,6 +46,9 @@
     }
     return ["UmbraNet — пассивная TCP-проверка", `Состояние: ${labels[view.phase] || "неизвестно"}; лимит ${view.duration_seconds ?? 30} с.`, "Охват: все приложения на web-портах, не только выбранные цели.", direction("Исходящие", view.tcp_stats?.outbound), direction("Входящие", view.tcp_stats?.inbound), "Размер >1500, флаги и суммы не доказывают наличие или отсутствие LSO; потери копий не измеряются."].join("\n\n");
   }
+  function flowSummary(view) {
+    return ["UmbraNet — пассивная проверка соединений", `Состояние: ${labels[view.phase] || "неизвестно"}`, `Новых соединений: ${view.established ?? 0}`, `Закрыто: ${view.deleted ?? 0}`, `Имя процесса получено: ${view.identified ?? 0}`, `Предварительно выбранный процесс: ${view.selected_process ?? 0}`, `Процесс не определён: ${view.unresolved ?? 0}`, `Неизвестных событий: ${view.ignored ?? 0}`, `Удалено событий из очереди: ${view.events_dropped ?? 0}`, "Проверка наблюдает новые соединения на указанных портах, включая другие приложения. Имя процесса предварительное; проверка не подтверждает обход, домены или голос."].join("\n");
+  }
   function render(view) {
     const previous = state;
     const terminal = ["finished", "error", "stop_failed"].includes(view.phase);
@@ -66,16 +64,22 @@
       window.umbraJournal?.add("error", view.message);
     }
     if (!terminal) window.umbraJournal?.addFlowView(view);
+    if (view.phase === "finished" && view.phase !== previous?.phase) {
+      if (view.kind === "tcp_metadata") {
+        window.umbraJournal?.add("system", `TCP-проверка: исходящих пакетов ${view.tcp_stats?.outbound?.total ?? 0}, входящих ${view.tcp_stats?.inbound?.total ?? 0}.`);
+      } else {
+        window.umbraJournal?.add("system", `Проверка соединений: новых ${view.established ?? 0}, определено процессов ${view.identified ?? 0}, не определено ${view.unresolved ?? 0}.`);
+      }
+    }
     if (terminal && view.phase !== previous?.phase) window.dispatchEvent(new Event("umbra-diagnostic-finished"));
     state = view;
     if (view.busy !== previous?.busy) window.dispatchEvent(new Event("umbra-diagnostic-busy"));
     phase.textContent = labels[view.phase] || "Неизвестное состояние";
     phase.classList.toggle("is-error", ["error", "stop_failed"].includes(view.phase));
-    for (const [key, node] of Object.entries(counts)) node.textContent = String(view[key] ?? 0);
     const tcpMode = view.kind === "tcp_metadata";
-    flowStats.hidden = tcpMode;
-    tcpResults.hidden = !tcpMode;
-    if (tcpMode) tcpReport.value = tcpSummary(view);
+    tcpOpen.hidden = !(view.session_id && terminal);
+    resultTitle.textContent = tcpMode ? "Результат TCP" : "Результат проверки соединений";
+    tcpReport.value = tcpMode ? tcpSummary(view) : flowSummary(view);
     displayError(view.message);
     controls();
     schedule();
@@ -141,13 +145,19 @@
     await invoke("dpi_diagnostic_clear_events");
     if (state) state.events = [];
   };
-  start.addEventListener("click", () => command("dpi_diagnostic_start"));
+  start.addEventListener("click", () => {
+    if (!ready || submitting || state?.busy) return;
+    if (!window.confirm("Пассивно наблюдать новые соединения на заданных портах, в том числе других приложений, 30 секунд? Может запуститься общий драйвер WinDivert. Закрытие проверки не гарантирует его выгрузку.")) return;
+    command("dpi_diagnostic_start");
+  });
   tcpStart.addEventListener("click", () => {
     if (!ready || submitting || state?.busy) return;
     if (!window.confirm("Пассивно прочитать копии TCP-пакетов на web-портах всех приложений в течение 30 секунд? Содержимое и адреса не сохраняются. Может запуститься общий драйвер WinDivert.")) return;
     command("dpi_tcp_diagnostic_start");
   });
   stop.addEventListener("click", () => command("dpi_diagnostic_stop"));
+  tcpOpen.addEventListener("click", () => { if (!tcpDialog.open) tcpDialog.showModal(); });
+  document.querySelector("#diagnostic-tcp-close").addEventListener("click", () => tcpDialog.close());
   if (typeof invoke !== "function") {
     phase.textContent = "Доступна только в приложении";
     return;
