@@ -6,6 +6,7 @@ pub mod diagnostics;
 pub mod domain;
 pub mod engine;
 pub mod flow;
+pub mod journal_store;
 pub mod layout;
 pub mod lifecycle;
 pub mod profiles;

@@ -14,7 +14,7 @@ impl DpiState {
     }
 }
 
-fn app_root() -> Result<PathBuf, String> {
+pub(crate) fn app_root() -> Result<PathBuf, String> {
     if cfg!(debug_assertions) {
         return Ok(PathBuf::from(env!("CARGO_MANIFEST_DIR")).join(".."));
     }
