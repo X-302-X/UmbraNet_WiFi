@@ -224,10 +224,11 @@ impl StrategyView {
             .iter()
             .map(|s| {
                 format!(
-                    "{{\"id\":{},\"name\":{},\"file\":{}}}",
+                    "{{\"id\":{},\"name\":{},\"file\":{},\"implementation_pending\":{}}}",
                     quote(&s.id),
                     quote(&s.name),
-                    quote(&s.file)
+                    quote(&s.file),
+                    s.implementation_pending
                 )
             })
             .collect();

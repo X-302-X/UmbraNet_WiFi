@@ -284,6 +284,17 @@ impl DivertChannel {
         // Даже низкоуровневый активный канал не открываем до отдельного ревью.
         crate::safety::active_start_guard()
             .map_err(|e| io::Error::new(io::ErrorKind::PermissionDenied, e))?;
+        Self::open_inner(dll_path, filter_text)
+    }
+
+    /// Узкий тестовый канал: только исходящий localhost TCP к заранее занятому
+    /// портом этой проверки listener. НЕ разрешает активный DPI-движок.
+    #[cfg(feature = "loopback-probe")]
+    pub(super) fn open_loopback_probe(dll_path: &Path, port: u16) -> io::Result<Self> {
+        Self::open_inner(dll_path, &super::loopback_exchange::filter(port)?)
+    }
+
+    fn open_inner(dll_path: &Path, filter_text: &str) -> io::Result<Self> {
         let filter = CString::new(filter_text)
             .map_err(|_| io::Error::new(io::ErrorKind::InvalidInput, "Некорректный фильтр"))?;
         let library = Library::load(dll_path)?;
@@ -528,5 +539,62 @@ mod tests {
                 ipv6
             ));
         }
+    }
+
+    #[test]
+    fn official_evaluator_limits_loopback_probe_to_its_address_and_port() {
+        #[link(name = "kernel32")]
+        extern "system" {
+            fn SetLastError(code: u32);
+            fn GetLastError() -> u32;
+        }
+        let path = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("driver")
+            .join("WinDivert.dll");
+        let library = Library::load(&path).unwrap();
+        type EvalFn =
+            unsafe extern "C" fn(*const c_char, *const c_void, u32, *const WinDivertAddress) -> i32;
+        let eval: EvalFn =
+            unsafe { std::mem::transmute(library.symbol(b"WinDivertHelperEvalFilter\0").unwrap()) };
+        let filter = CString::new(super::super::loopback_exchange::filter(54321).unwrap()).unwrap();
+        let mut packet = vec![0; 40];
+        packet[0] = 0x45;
+        packet[2..4].copy_from_slice(&40u16.to_be_bytes());
+        packet[8] = 64;
+        packet[9] = 6;
+        packet[12..16].copy_from_slice(&[127, 0, 0, 1]);
+        packet[16..20].copy_from_slice(&[127, 0, 0, 1]);
+        packet[20..22].copy_from_slice(&55000u16.to_be_bytes());
+        packet[22..24].copy_from_slice(&54321u16.to_be_bytes());
+        packet[32] = 0x50;
+        packet[33] = 2;
+        let matches = |p: &[u8], outbound: bool, loopback: bool, impostor: bool| {
+            let addr = WinDivertAddress::for_filter_test(outbound, loopback, impostor, false);
+            unsafe {
+                SetLastError(0);
+                let result = eval(filter.as_ptr(), p.as_ptr().cast(), p.len() as u32, &addr);
+                if result == 0 {
+                    assert_eq!(GetLastError(), 0, "Ошибка WinDivertHelperEvalFilter");
+                }
+                result != 0
+            }
+        };
+        assert!(matches(&packet, true, true, false));
+        assert!(!matches(&packet, false, true, false));
+        assert!(!matches(&packet, true, false, false));
+        assert!(!matches(&packet, true, true, true));
+        let mut p = packet.clone();
+        p[22..24].copy_from_slice(&54322u16.to_be_bytes());
+        assert!(!matches(&p, true, true, false));
+        let mut p = packet.clone();
+        p[12..16].copy_from_slice(&[192, 0, 2, 1]);
+        assert!(!matches(&p, true, true, false));
+        let mut p = packet.clone();
+        p[16..20].copy_from_slice(&[192, 0, 2, 1]);
+        assert!(!matches(&p, true, true, false));
+        let mut p = packet.clone();
+        p[9] = 17;
+        p[24..26].copy_from_slice(&20u16.to_be_bytes());
+        assert!(!matches(&p, true, true, false));
     }
 }

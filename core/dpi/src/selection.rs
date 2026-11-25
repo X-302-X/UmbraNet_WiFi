@@ -21,6 +21,7 @@ pub struct Selection {
 pub struct Snapshot {
     pub services: BTreeSet<String>,
     pub domains: BTreeSet<String>,
+    pub manual_domains: BTreeSet<String>,
     pub manual_processes: BTreeSet<String>,
     pub service_processes: BTreeMap<String, BTreeSet<String>>,
     pub strategy: Strategy,
@@ -108,6 +109,7 @@ impl Selection {
         Ok(Snapshot {
             services: self.services.clone(),
             domains: self.active_domains(catalog)?,
+            manual_domains: self.manual_domains.clone(),
             manual_processes: self.manual_processes.clone(),
             service_processes: self.service_processes(),
             strategy: strategy.clone(),

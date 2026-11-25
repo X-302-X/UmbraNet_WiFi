@@ -182,7 +182,9 @@ impl Engine {
                 );
 
                 let sttl = self.server_ttl.get(&dst_ip).copied();
-                let plan = self.strategy.to_desync_plan(sttl);
+                let Ok(plan) = self.strategy.to_desync_plan(sttl) else {
+                    return vec![raw.to_vec()];
+                };
                 match apply_desync(raw, &plan) {
                     Ok(packets) => packets,
                     // Известные ограничения (нет payload, слишком много сегментов) — не ошибка.

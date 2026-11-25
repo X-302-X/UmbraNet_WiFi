@@ -10,6 +10,8 @@ pub mod packet;
 pub mod reinject;
 pub mod stream;
 pub mod synthetic_split;
+pub mod synthetic_timestamp;
+pub mod synthetic_uz1_fake;
 pub mod tcp_options;
 pub mod udp_desync;
 pub mod voice;

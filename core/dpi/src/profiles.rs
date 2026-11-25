@@ -14,6 +14,8 @@ pub struct Summary {
     pub id: String,
     pub name: String,
     pub file: String,
+    /// Старый Uz1 доступен для выбора, но пока не исполняется новым движком.
+    pub implementation_pending: bool,
 }
 
 struct LoadedProfile {
@@ -46,7 +48,7 @@ impl Profiles {
             }
             let text = fs::read_to_string(&path)
                 .map_err(|e| format!("Не удалось прочитать {}: {e}", path.display()))?;
-            let strategy = Strategy::from_json(&text)
+            let strategy = Strategy::from_profile_json(&text)
                 .map_err(|e| format!("Некорректная стратегия {}: {e}", path.display()))?;
             let file = path
                 .file_name()
@@ -78,6 +80,7 @@ impl Profiles {
                 id: p.strategy.id.clone(),
                 name: p.strategy.name.clone(),
                 file: p.file.clone(),
+                implementation_pending: p.strategy.is_legacy_uz1(),
             })
             .collect()
     }

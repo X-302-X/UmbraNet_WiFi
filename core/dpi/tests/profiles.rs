@@ -82,7 +82,7 @@ fn udp_fake_action_is_parsed() {
     assert_eq!(fooling.len(), 2);
     assert!(matches!(strategy.actions[0], Action::UdpFake { .. }));
     // TCP-план при этом пустой, но не паникует
-    let plan = strategy.to_desync_plan(None);
+    let plan = strategy.to_desync_plan(None).unwrap();
     assert!(plan.splits.is_empty());
     assert!(!plan.fake);
 }
@@ -164,4 +164,85 @@ fn pass_through_name_does_not_make_active_strategy_safe() {
     let p = Profiles::load(&dir).unwrap();
     assert_eq!(p.ensure_selected().unwrap(), None);
     let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn bundled_original_uz1_is_listed_preserved_and_not_executable() {
+    use umbranet_dpi::{store::Store, strategy::LegacyUz1};
+    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../strtegs_Uz");
+    let original = std::fs::read_to_string(root.join("uz1.json")).unwrap();
+    let input: LegacyUz1 = serde_json::from_str(&original).unwrap();
+    assert_eq!(input.id, "uz1");
+    assert_eq!(input.hostlist.len(), 0);
+    assert_eq!(input.args.iter().filter(|arg| *arg == "--new").count(), 2);
+    assert!(input
+        .args
+        .contains(&"--dpi-desync-split-seqovl=681".to_string()));
+    assert!(input
+        .args
+        .contains(&"--dpi-desync-split-seqovl=664".to_string()));
+    assert_eq!(
+        input
+            .args
+            .iter()
+            .filter(|arg| *arg == "--dpi-desync-fooling=ts")
+            .count(),
+        2
+    );
+    let profiles = Profiles::load(&root).unwrap();
+    let loaded = profiles.get("uz1").unwrap();
+    let [Action::LegacyUz1 { profile }] = loaded.actions.as_slice() else {
+        panic!("legacy data lost")
+    };
+    assert_eq!(profile, &input); // including order, repeats, duplicate flags and placeholders
+    assert!(
+        profiles
+            .list()
+            .iter()
+            .find(|p| p.id == "uz1")
+            .unwrap()
+            .implementation_pending
+    );
+    assert!(!loaded.is_pass_through());
+    assert!(loaded.to_desync_plan(None).is_err());
+    let restored = Strategy::from_json(&serde_json::to_string(loaded).unwrap()).unwrap();
+    assert_eq!(restored.actions, loaded.actions);
+    let dir = temp_dir("legacy-plan");
+    let mut store = Store::open(&dir).unwrap();
+    store.apply("service", "youtube", true).unwrap();
+    let plan = store.prepare_session(loaded).unwrap();
+    let inspected = plan.inspect_uz1().unwrap();
+    assert_eq!(
+        inspected.matching_sections(umbranet_dpi::uz1_plan::Protocol::Tcp, 443),
+        [1, 2]
+    );
+    assert!(plan.check_known_limits().unwrap_err().contains("Uz1"));
+    assert!(plan.make_offline_engine(None).is_err());
+    assert!(plan.make_guarded_engine(None).is_err());
+    assert!(umbranet_dpi::safety::active_start_guard().is_err());
+    let _ = std::fs::remove_dir_all(dir);
+}
+
+#[test]
+fn uz1_rejects_ambiguous_formats_and_cannot_be_silently_mixed() {
+    let text = include_str!("../../../strtegs_Uz/uz1.json");
+    let v: serde_json::Value = serde_json::from_str(text).unwrap();
+    for (field, value) in [
+        ("enabled", serde_json::json!(false)),
+        ("hostlist", serde_json::json!(["other.example"])),
+        ("id", serde_json::json!("unknown")),
+        ("unexpected", serde_json::json!(true)),
+        ("args", serde_json::json!([])),
+    ] {
+        let mut changed = v.clone();
+        changed[field] = value;
+        assert!(
+            Strategy::from_profile_json(&changed.to_string()).is_err(),
+            "accepted {field}"
+        );
+    }
+    let mut strategy = Strategy::from_profile_json(text).unwrap();
+    strategy.actions.push(Action::PassThrough);
+    assert!(Strategy::from_json(&serde_json::to_string(&strategy).unwrap()).is_err());
+    assert!(strategy.to_desync_plan(None).is_err());
 }

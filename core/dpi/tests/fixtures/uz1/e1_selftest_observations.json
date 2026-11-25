@@ -1,0 +1,54 @@
+{
+  "source": "UmbraNet/bin/e1-spike.exe",
+  "sha256": "13eccf5a3c5f1e9042815a1f8664d184b7f19134cc92cbf9ef585a2b2c775440",
+  "version": "0.9.6",
+  "command": "selftest --json",
+  "environment": "Wine/Linux, network namespace without interfaces, isolated writable scratch, no WinDivert files; not live Windows",
+  "summary": {
+    "t": "summary",
+    "passed": 48,
+    "failed": 0
+  },
+  "selected": [
+    {
+      "name": "multisplit_positions_sanitized",
+      "ok": true,
+      "detail": "позиции: [1, 35], собрано 70 из 70"
+    },
+    {
+      "name": "strategy_uz1_subset",
+      "ok": true,
+      "detail": "применено 7, пропущено 1"
+    },
+    {
+      "name": "seqovl_prefix_and_receiver_view",
+      "ok": true,
+      "detail": "паттерн: true, seq-8: true, собрано 76 из 76"
+    },
+    {
+      "name": "fake_ts_swap_or_badsum",
+      "ok": true,
+      "detail": "TSval=0: true, сумма валидна (winws): true, фолбэк badsum без TS: true"
+    },
+    {
+      "name": "fake_blob_and_ip_id_zero",
+      "ok": true,
+      "detail": "нагрузка .bin: true, ip-id=0: true/true, фейк не примут: true, ip-id уникальны: true"
+    },
+    {
+      "name": "seqovl_requires_disorder",
+      "ok": true,
+      "detail": "без disorder seqovl выключен: true"
+    },
+    {
+      "name": "multi_profile_first_match",
+      "ok": true,
+      "detail": "discord->Some(6), youtube->Some(3)"
+    },
+    {
+      "name": "multi_profile_proto_isolation",
+      "ok": true,
+      "detail": "TCP->Some(7) (надо 7, не 2)"
+    }
+  ]
+}

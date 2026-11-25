@@ -69,6 +69,24 @@ fn write_checksums(raw: &mut [u8], ipv6: bool) {
 /// Только последний сегмент сохраняет исходный PSH. Все прочие заголовочные поля,
 /// в том числе IPv4 ID, копируются. Применимость к живому TCP не проверяется.
 pub fn split_fixture(raw: &[u8], cuts: &[usize]) -> Result<Vec<FixtureSegment>, SplitError> {
+    split_fixture_inner(raw, cuts, false)
+}
+
+/// Отдельная офлайн-модель для исходного TCP с timestamp option. Принимает
+/// только проверенный TS с NOP/EOL заполнением; прочие options отклоняются.
+/// Не является воспроизведением e1-spike и не пригодна для live-пакетов.
+pub fn split_timestamp_fixture(
+    raw: &[u8],
+    cuts: &[usize],
+) -> Result<Vec<FixtureSegment>, SplitError> {
+    split_fixture_inner(raw, cuts, true)
+}
+
+fn split_fixture_inner(
+    raw: &[u8],
+    cuts: &[usize],
+    allow_timestamp: bool,
+) -> Result<Vec<FixtureSegment>, SplitError> {
     let packet = parse_ip(raw).map_err(SplitError::Packet)?;
     if packet.protocol != Protocol::Tcp {
         return Err(SplitError::Unsupported);
@@ -83,7 +101,7 @@ pub fn split_fixture(raw: &[u8], cuts: &[usize]) -> Result<Vec<FixtureSegment>, 
     };
     if total != raw.len()
         || (!ipv6 && (raw[0] & 0x0f != 5 || raw[6] & 0x80 != 0))
-        || !tcp.options.is_empty()
+        || (!allow_timestamp && !tcp.options.is_empty())
         || tcp.reserved_and_ns != 0
         || tcp.urgent_pointer != 0
         || !matches!(tcp.flags, 0x10 | 0x18)
@@ -93,6 +111,13 @@ pub fn split_fixture(raw: &[u8], cuts: &[usize]) -> Result<Vec<FixtureSegment>, 
         return Err(SplitError::Unsupported);
     }
     verify_tcp(raw).map_err(SplitError::Checksum)?;
+    if allow_timestamp {
+        let parsed = super::tcp_options::parse(tcp.options, false, true)
+            .map_err(|_| SplitError::Unsupported)?;
+        if parsed.timestamp.is_none() || !parsed.sack_blocks.is_empty() {
+            return Err(SplitError::Unsupported);
+        }
+    }
     if packet.payload.is_empty() {
         return Err(SplitError::EmptyPayload);
     }
@@ -105,7 +130,7 @@ pub fn split_fixture(raw: &[u8], cuts: &[usize]) -> Result<Vec<FixtureSegment>, 
     {
         return Err(SplitError::InvalidCuts);
     }
-    let header_len = ip_len + 20;
+    let header_len = ip_len + 20 + tcp.options.len();
     let mut result = Vec::with_capacity(cuts.len() + 1);
     let mut start = 0;
     for end in cuts

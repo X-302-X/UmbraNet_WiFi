@@ -88,6 +88,10 @@ impl CapturePlan {
 
 #[cfg(all(windows, target_arch = "x86_64"))]
 pub mod driver_service;
+#[cfg(any(test, all(windows, target_arch = "x86_64", feature = "loopback-probe")))]
+mod loopback_exchange;
+#[cfg(all(windows, target_arch = "x86_64", feature = "loopback-probe"))]
+pub mod loopback_probe;
 #[cfg(all(windows, target_arch = "x86_64"))]
 pub mod reflect;
 #[cfg(any(test, all(windows, target_arch = "x86_64")))]

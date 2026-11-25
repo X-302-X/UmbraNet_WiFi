@@ -39,6 +39,9 @@ impl SessionPlan {
     pub fn services(&self) -> &BTreeSet<String> {
         &self.snapshot.services
     }
+    pub fn manual_domains(&self) -> &BTreeSet<String> {
+        &self.snapshot.manual_domains
+    }
     pub fn manual_processes(&self) -> &BTreeSet<String> {
         &self.snapshot.manual_processes
     }
@@ -67,9 +70,27 @@ impl SessionPlan {
         ))
     }
 
+    /// Анализ исходной Uz1 в неизменяемом снимке. Не выбирает пересекающиеся
+    /// секции и не даёт разрешения на выполнение или открытие драйвера.
+    pub fn inspect_uz1(&self) -> Result<crate::uz1_plan::Uz1Plan, String> {
+        match self.snapshot.strategy.actions.as_slice() {
+            [Action::LegacyUz1 { profile }] => crate::uz1_plan::Uz1Plan::parse(profile),
+            _ => Err("Выбранная стратегия не является исходной Uz1".into()),
+        }
+    }
+
     /// Неполный список известных неподдерживаемых случаев, не разрешение на запуск.
     /// Двигатель пока не умеет надёжно сопоставлять процессы или обрабатывать UDP.
     pub fn check_known_limits(&self) -> Result<(), String> {
+        if self
+            .snapshot
+            .strategy
+            .actions
+            .iter()
+            .any(|action| matches!(action, Action::LegacyUz1 { .. }))
+        {
+            return Err("Стратегия Uz1 сохранена, но её аргументы ещё не поддерживаются движком; запуск запрещён".into());
+        }
         if self.snapshot.domains.is_empty() {
             return Err(
                 "Пока требуется хотя бы один выбранный домен: привязка по процессу не готова"

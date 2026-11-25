@@ -13,6 +13,41 @@ pub enum StrategySplitPos {
     Mid,
 }
 
+/// Оригинальный формат профиля Uz1. Это сохранение исходных параметров,
+/// а не их перевод в готовые действия движка. Никаких команд не выполняет.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct LegacyUz1 {
+    pub id: String,
+    pub name: String,
+    pub description: String,
+    pub enabled: bool,
+    pub args: Vec<String>,
+    pub hostlist: Vec<String>,
+}
+
+impl LegacyUz1 {
+    pub(crate) fn validate(&self) -> Result<(), String> {
+        if self.id != "uz1"
+            || self.name.trim().is_empty()
+            || !self.enabled
+            || !self.hostlist.is_empty()
+            || self.args.is_empty()
+            || self.args.len() > 128
+            || self
+                .args
+                .iter()
+                .any(|arg| arg.is_empty() || arg.len() > 4096 || arg.contains('\0'))
+        {
+            return Err(
+                "Неподдерживаемый профиль Uz1: требуется включённый профиль без встроенных целей"
+                    .into(),
+            );
+        }
+        Ok(())
+    }
+}
+
 /// Метод маскировки (fooling) fake-пакета.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -28,6 +63,10 @@ pub enum StrategyFooling {
 #[serde(rename_all = "snake_case")]
 pub enum Action {
     PassThrough,
+    /// Только хранение старого формата; запуск и преобразование запрещены.
+    LegacyUz1 {
+        profile: LegacyUz1,
+    },
     Fake {
         #[serde(default = "default_repeats")]
         repeats: u8,
@@ -78,7 +117,48 @@ impl Strategy {
         {
             return Err("Некорректная или неподдерживаемая стратегия".into());
         }
+        if strategy
+            .actions
+            .iter()
+            .any(|a| matches!(a, Action::LegacyUz1 { .. }))
+        {
+            match strategy.actions.as_slice() {
+                [Action::LegacyUz1 { profile }]
+                    if strategy.id == profile.id && strategy.name == profile.name =>
+                {
+                    profile.validate()?
+                }
+                _ => {
+                    return Err(
+                        "Старый профиль нельзя смешивать с действиями новой стратегии".into(),
+                    )
+                }
+            }
+        }
         Ok(strategy)
+    }
+
+    /// Загружает исходный JSON Uz1 без изменения его аргументов или подмены
+    /// семантики. Остальные файлы разбираются только как обычные стратегии.
+    pub fn from_profile_json(json: &str) -> Result<Self, String> {
+        let value: serde_json::Value = serde_json::from_str(json).map_err(|e| e.to_string())?;
+        if value.get("args").is_none() {
+            return Self::from_json(json);
+        }
+        // Повторно читаем исходную строку, чтобы serde не потерял повторные
+        // ключи объекта при промежуточном разборе в Value.
+        let profile: LegacyUz1 = serde_json::from_str(json).map_err(|e| e.to_string())?;
+        profile.validate()?;
+        Ok(Self {
+            version: 1,
+            id: profile.id.clone(),
+            name: profile.name.clone(),
+            actions: vec![Action::LegacyUz1 { profile }],
+        })
+    }
+
+    pub fn is_legacy_uz1(&self) -> bool {
+        matches!(self.actions.as_slice(), [Action::LegacyUz1 { .. }])
     }
 
     pub fn is_pass_through(&self) -> bool {
@@ -86,7 +166,14 @@ impl Strategy {
     }
 
     /// Преобразует действия стратегии в исполняемый `DesyncPlan`.
-    pub fn to_desync_plan(&self, server_ttl: Option<u8>) -> DesyncPlan {
+    pub fn to_desync_plan(&self, server_ttl: Option<u8>) -> Result<DesyncPlan, &'static str> {
+        if self
+            .actions
+            .iter()
+            .any(|a| matches!(a, Action::LegacyUz1 { .. }))
+        {
+            return Err("Аргументы Uz1 ещё не поддерживаются движком");
+        }
         let mut plan = DesyncPlan {
             splits: Vec::new(),
             disorder: false,
@@ -98,7 +185,7 @@ impl Strategy {
         };
         for action in &self.actions {
             match action {
-                Action::PassThrough => {}
+                Action::PassThrough | Action::LegacyUz1 { .. } => {}
                 Action::Fake { repeats, fooling } => {
                     plan.fake = true;
                     plan.fake_repeats = (*repeats).max(1);
@@ -135,7 +222,7 @@ impl Strategy {
                 Action::UdpFake { .. } => {}
             }
         }
-        plan
+        Ok(plan)
     }
 
     /// Параметры fake-пакетов для UDP (QUIC / Discord Voice).
