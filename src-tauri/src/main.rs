@@ -29,6 +29,20 @@ fn main() {
         .manage(journal::JournalState::new())
         .on_window_event(|window, event| {
             if let tauri::WindowEvent::CloseRequested { api, .. } = event {
+                // Дочерний тест не должен оставаться без наблюдения при обычном закрытии.
+                if window.label() == "main"
+                    && window
+                        .state::<dpi_bridge::DiagnosticState>()
+                        .probe_running_or_unknown()
+                {
+                    api.prevent_close();
+                    if let Some(webview) = window.app_handle().get_webview_window(window.label()) {
+                        let _ = webview.eval(
+                            "window.dispatchEvent(new Event('umbra-loopback-close-blocked'))",
+                        );
+                    }
+                    return;
+                }
                 let state = window.state::<journal::JournalState>();
                 if window.label() == "main"
                     && state.ready.load(Ordering::Acquire)
@@ -55,6 +69,8 @@ fn main() {
             dpi_bridge::dpi_apply,
             dpi_bridge::dpi_control_status,
             dpi_bridge::dpi_diagnostic_status,
+            dpi_bridge::dpi_loopback_status,
+            dpi_bridge::dpi_loopback_start,
             dpi_bridge::dpi_diagnostic_clear_events,
             dpi_bridge::dpi_diagnostic_start,
             dpi_bridge::dpi_tcp_diagnostic_start,

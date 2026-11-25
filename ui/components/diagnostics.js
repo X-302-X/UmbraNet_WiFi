@@ -3,6 +3,7 @@
 (() => {
   const invoke = window.__TAURI_INTERNALS__?.invoke;
   const start = document.querySelector("#diagnostic-start");
+  const loopbackStart = document.querySelector("#diagnostic-loopback-start");
   const tcpStart = document.querySelector("#diagnostic-tcp-start");
   const tcpOpen = document.querySelector("#diagnostic-tcp-open");
   const tcpDialog = document.querySelector("#diagnostic-tcp-dialog");
@@ -23,14 +24,23 @@
   let requestSequence = 0;
   let appliedSequence = 0;
   let lastStatusError = null;
+  let probe = null;
+  let probeReady = false;
+  let probeSubmitting = false;
+  let probePolling = false;
+  let probeTimer = null;
+  let probeSequence = 0;
+  let probeApplied = 0;
 
   function displayError(text) {
     message.textContent = text || "";
     message.hidden = !text;
   }
   function controls() {
-    start.disabled = !ready || submitting || Boolean(state?.busy);
+    const probeBusy = !probeReady || probeSubmitting || probe?.phase === "running" || probe?.blocked;
+    start.disabled = !ready || submitting || Boolean(state?.busy) || probeBusy;
     tcpStart.disabled = start.disabled;
+    loopbackStart.disabled = !ready || submitting || Boolean(state?.busy) || probeBusy;
     stop.disabled = !ready || submitting || !state?.busy || ["stopping", "stop_failed"].includes(state?.phase);
   }
   function schedule() {
@@ -138,7 +148,62 @@
       displayError(failure);
     }
   }
-  window.umbraDiagnosticBusy = () => !state || Boolean(state.busy);
+  function renderProbe(view) {
+    const previous = probe;
+    probe = view;
+    if (view.phase === "running") {
+      phase.textContent = "Локальная проверка…";
+    } else if (view.phase !== previous?.phase && ["finished", "error"].includes(view.phase)) {
+      const text = view.message || (view.phase === "finished" ? "Локальная проверка завершена." : "Ошибка локальной проверки.");
+      window.umbraJournal?.add(view.phase === "error" ? "error" : "system", text);
+      if (view.phase === "error") displayError(text);
+      else displayError("");
+      phase.textContent = view.phase === "finished" ? "Локальная проверка завершена" : "Ошибка локальной проверки";
+    }
+    controls();
+    window.dispatchEvent(new Event("umbra-diagnostic-busy"));
+    clearTimeout(probeTimer);
+    if (view.phase === "running") probeTimer = setTimeout(refreshProbe, 600);
+  }
+  async function refreshProbe() {
+    if (probePolling || probeSubmitting) return;
+    probePolling = true;
+    const sequence = ++probeSequence;
+    try {
+      const view = await invoke("dpi_loopback_status");
+      if (sequence >= probeApplied) { probeApplied = sequence; probeReady = true; renderProbe(view); }
+    } catch (error) {
+      if (sequence >= probeApplied) {
+        probeReady = false;
+        const text = `Не удалось получить состояние локальной проверки: ${error}`;
+        displayError(text); window.umbraJournal?.add("error", text);
+        controls(); window.dispatchEvent(new Event("umbra-diagnostic-busy"));
+        probeTimer = setTimeout(refreshProbe, 1500);
+      }
+    } finally { probePolling = false; }
+  }
+  loopbackStart.addEventListener("click", async () => {
+    if (!ready || !probeReady || submitting || probeSubmitting || state?.busy || probe?.phase === "running" || probe?.blocked) return;
+    if (!window.confirm("Активная локальная проверка временно перехватит TCP к собственному тестовому порту и вернёт пакеты без изменений. Другая локальная программа тоже может подключиться к этому порту; возможна потеря пакетов. Может запуститься общий WinDivert, который тест не останавливает. Сохраните работу и закройте Zapret и другие программы WinDivert. Продолжить?")) return;
+    probeSubmitting = true; controls(); window.dispatchEvent(new Event("umbra-diagnostic-busy"));
+    window.umbraJournal?.add("system", "Пользователь запустил локальную проверку возврата пакетов.");
+    const sequence = ++probeSequence; probeApplied = sequence;
+    try {
+      const view = await invoke("dpi_loopback_start");
+      if (sequence >= probeApplied) renderProbe(view);
+    } catch (error) {
+      const text = `Не удалось запустить локальную проверку: ${error}`;
+      displayError(text); window.umbraJournal?.add("error", text);
+    } finally {
+      probeSubmitting = false; controls(); window.dispatchEvent(new Event("umbra-diagnostic-busy"));
+      await refreshProbe();
+    }
+  });
+  window.addEventListener?.("umbra-loopback-close-blocked", () => {
+    const text = "Дождитесь завершения локальной проверки перед закрытием программы.";
+    displayError(text); window.umbraJournal?.add("system", text);
+  });
+  window.umbraDiagnosticBusy = () => !state || Boolean(state.busy) || !probeReady || probeSubmitting || probe?.phase === "running" || Boolean(probe?.blocked);
   window.umbraDiagnosticClear = async () => {
     const sequence = ++requestSequence;
     appliedSequence = sequence;
@@ -163,4 +228,5 @@
     return;
   }
   refresh();
+  refreshProbe();
 })();

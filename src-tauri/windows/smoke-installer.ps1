@@ -21,7 +21,7 @@ function Require-File([string]$path) {
 }
 
 Install-Test
-@('umbranet-wifi.exe', 'uninstall.exe', 'core/dpi/driver/WinDivert.dll',
+@('umbranet-wifi.exe', 'uninstall.exe', 'core/dpi/driver/loopback_probe.exe', 'core/dpi/driver/WinDivert.dll',
   'core/dpi/driver/WinDivert64.sys', 'core/dpi/driver/LICENSE-WinDivert.txt',
   'core/dpi/driver/NOTICE.txt', 'strtegs_Uz/pass-through.json',
   'strtegs_Uz/discord-voice.json', 'strtegs_Uz/quic-bypass.json',
@@ -35,7 +35,16 @@ $expected = @{
 }
 foreach ($file in $expected.Keys) {
     $actual = (Get-FileHash (Join-Path $install $file) -Algorithm SHA256).Hash.ToLowerInvariant()
-    if ($actual -ne $expected[$file]) { throw "Incorrect installed WinDivert file: $file" }
+    if ($actual -ne $expected[$file]) {
+        $sourcePath = Join-Path (Join-Path $PSScriptRoot '../..') $file
+        $sourceHash = if (Test-Path -LiteralPath $sourcePath -PathType Leaf) { (Get-FileHash -LiteralPath $sourcePath -Algorithm SHA256).Hash.ToLowerInvariant() } else { 'missing' }
+        throw "Incorrect installed file: $file; expected SHA-256 $($expected[$file]); installed $actual; source $sourceHash"
+    }
+}
+$helperSource = Join-Path $PSScriptRoot '../../core/dpi/target/x86_64-pc-windows-msvc/release/examples/loopback_probe.exe'
+$helperInstalled = Join-Path $install 'core/dpi/driver/loopback_probe.exe'
+if ((Get-FileHash -LiteralPath $helperSource -Algorithm SHA256).Hash -ne (Get-FileHash -LiteralPath $helperInstalled -Algorithm SHA256).Hash) {
+    throw 'Installed loopback helper differs from the built helper'
 }
 # Reinstall without touching user-modified strategies or user-generated data.
 Set-Content -LiteralPath (Join-Path $install 'strtegs_Uz/pass-through.json') -Value 'user strategy' -NoNewline

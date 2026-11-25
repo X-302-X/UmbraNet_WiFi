@@ -492,6 +492,7 @@ fn install_with_confirmation(
         "uninstall.exe",
         "core/dpi/driver/WinDivert.dll",
         "core/dpi/driver/WinDivert64.sys",
+        "core/dpi/driver/loopback_probe.exe",
         "strtegs_Uz/pass-through.json",
     ] {
         if !target.join(file).is_file() {

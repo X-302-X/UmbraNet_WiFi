@@ -38,6 +38,7 @@
       "icons/icon.ico"
     ],
     "resources": {
+      "../core/dpi/target/x86_64-pc-windows-msvc/release/examples/loopback_probe.exe": "core/dpi/driver/loopback_probe.exe",
       "../core/dpi/driver/WinDivert.dll": "core/dpi/driver/WinDivert.dll",
       "../core/dpi/driver/WinDivert64.sys": "core/dpi/driver/WinDivert64.sys",
       "../core/dpi/driver/NOTICE.txt": "core/dpi/driver/NOTICE.txt",
