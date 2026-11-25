@@ -2,6 +2,29 @@
 //! Совпадение суммы, размер и флаги не определяют LSO и не доказывают цель.
 use crate::capture::{address::WinDivertAddress, tcp_checksum};
 use serde::Serialize;
+#[cfg(any(test, all(windows, target_arch = "x86_64")))]
+use std::sync::atomic::{AtomicUsize, Ordering};
+
+pub const IPV4_HELPER_SAMPLE_LIMIT: usize = 128;
+#[cfg(any(test, all(windows, target_arch = "x86_64")))]
+#[derive(Default)]
+pub(crate) struct Ipv4SampleBudget(AtomicUsize);
+#[cfg(any(test, all(windows, target_arch = "x86_64")))]
+impl Ipv4SampleBudget {
+    pub(crate) fn try_take(&self) -> bool {
+        let mut n = self.0.load(Ordering::Relaxed);
+        while n < IPV4_HELPER_SAMPLE_LIMIT {
+            match self
+                .0
+                .compare_exchange_weak(n, n + 1, Ordering::Relaxed, Ordering::Relaxed)
+            {
+                Ok(_) => return true,
+                Err(actual) => n = actual,
+            }
+        }
+        false
+    }
+}
 
 #[derive(Debug, Clone, Copy)]
 pub struct PacketFacts {
@@ -9,6 +32,16 @@ pub struct PacketFacts {
     ipv6: bool,
     large: bool,
     checks: Option<Checks>,
+    ipv4_mismatch_zero: Option<bool>,
+    ipv4_native: Option<Ipv4NativeComparison>,
+}
+
+/// Результат независимого пересчёта IPv4 на временной копии пакета.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Ipv4NativeComparison {
+    Same,
+    Different,
+    Unavailable,
 }
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 struct Checks {
@@ -28,11 +61,29 @@ impl PacketFacts {
                     .ipv4_header_valid
                     .map(|valid| (address.ip_checksum(), valid)),
             });
+        // Только для уже разобранного противоречия; сохраняем лишь признак,
+        // нулевое ли поле checksum, без адресов и самих значений.
+        let ipv4_mismatch_zero =
+            if address.outbound() && checks.and_then(|c| c.ipv4) == Some((true, false)) {
+                Some(raw[10] == 0 && raw[11] == 0)
+            } else {
+                None
+            };
         Self {
             outbound: address.outbound(),
             ipv6: address.ipv6(),
             large: raw.len() > 1500,
             checks,
+            ipv4_mismatch_zero,
+            ipv4_native: None,
+        }
+    }
+    pub fn needs_ipv4_native_comparison(&self) -> bool {
+        self.ipv4_mismatch_zero.is_some()
+    }
+    pub fn set_ipv4_native_comparison(&mut self, comparison: Ipv4NativeComparison) {
+        if self.needs_ipv4_native_comparison() {
+            self.ipv4_native = Some(comparison);
         }
     }
 }
@@ -54,6 +105,15 @@ impl Matrix {
         *v = v.saturating_add(1);
     }
 }
+/// Лишь агрегаты для исходящих IPv4 с flag=1 и неверной суммой по нашим байтам.
+#[derive(Debug, Default, Clone, Serialize)]
+pub struct Ipv4MismatchStats {
+    pub zero_field: u64,
+    pub nonzero_field: u64,
+    pub helper_same: u64,
+    pub helper_different: u64,
+    pub helper_unavailable: u64,
+}
 #[derive(Debug, Default, Clone, Serialize)]
 pub struct DirectionStats {
     pub total: u64,
@@ -63,6 +123,7 @@ pub struct DirectionStats {
     pub unsupported: u64,
     pub tcp_checksum: Matrix,
     pub ipv4_checksum: Matrix,
+    pub ipv4_mismatch: Ipv4MismatchStats,
 }
 impl DirectionStats {
     fn record(&mut self, packet: PacketFacts) {
@@ -75,6 +136,22 @@ impl DirectionStats {
         *version = version.saturating_add(1);
         if packet.large {
             self.over_1500_bytes = self.over_1500_bytes.saturating_add(1);
+        }
+        if let Some(zero) = packet.ipv4_mismatch_zero {
+            let count = if zero {
+                &mut self.ipv4_mismatch.zero_field
+            } else {
+                &mut self.ipv4_mismatch.nonzero_field
+            };
+            *count = count.saturating_add(1);
+        }
+        if let Some(compare) = packet.ipv4_native {
+            let count = match compare {
+                Ipv4NativeComparison::Same => &mut self.ipv4_mismatch.helper_same,
+                Ipv4NativeComparison::Different => &mut self.ipv4_mismatch.helper_different,
+                Ipv4NativeComparison::Unavailable => &mut self.ipv4_mismatch.helper_unavailable,
+            };
+            *count = count.saturating_add(1);
         }
         match packet.checks {
             Some(c) => {
@@ -198,6 +275,68 @@ mod tests {
         );
         assert_eq!(stats.outbound.ipv4_checksum.flag_set_valid, 2);
         assert_eq!(stats.outbound.ipv4_checksum.flag_unset_valid, 2);
+        let json = serde_json::to_string(&stats).unwrap();
+        assert!(!json.contains("192.0.2.1"));
+        assert!(!json.contains("616263"));
+    }
+    #[test]
+    fn sample_budget_is_bounded_even_with_concurrent_callers() {
+        use std::sync::Arc;
+        let budget = Arc::new(Ipv4SampleBudget::default());
+        let workers: Vec<_> = (0..8)
+            .map(|_| {
+                let budget = Arc::clone(&budget);
+                std::thread::spawn(move || (0..100).filter(|_| budget.try_take()).count())
+            })
+            .collect();
+        assert_eq!(
+            workers
+                .into_iter()
+                .map(|t| t.join().unwrap())
+                .sum::<usize>(),
+            IPV4_HELPER_SAMPLE_LIMIT
+        );
+        assert!(!budget.try_take());
+        assert!(Ipv4SampleBudget::default().try_take());
+    }
+    #[test]
+    fn ipv4_mismatch_aggregates_only_outbound_without_retaining_packet_data() {
+        let mut stats = TcpStats::default();
+        let original = bytes(V4);
+        let mut zero = original.clone();
+        zero[10..12].fill(0);
+        let mut nonzero = original.clone();
+        nonzero[8] ^= 1;
+        let addr = WinDivertAddress::from_test_bits((1 << 17) | (1 << 21));
+        for (p, comparison) in [
+            (&zero, Ipv4NativeComparison::Different),
+            (&nonzero, Ipv4NativeComparison::Same),
+            (&nonzero, Ipv4NativeComparison::Unavailable),
+        ] {
+            let before = p.clone();
+            let mut fact = PacketFacts::from_packet(p, &addr);
+            assert!(fact.needs_ipv4_native_comparison());
+            fact.set_ipv4_native_comparison(comparison);
+            stats.record(fact);
+            assert_eq!(*p, before);
+        }
+        let mut valid = PacketFacts::from_packet(&original, &addr);
+        assert!(!valid.needs_ipv4_native_comparison());
+        valid.set_ipv4_native_comparison(Ipv4NativeComparison::Same);
+        stats.record(valid);
+        let incoming = WinDivertAddress::from_test_bits(1 << 21);
+        assert!(!PacketFacts::from_packet(&zero, &incoming).needs_ipv4_native_comparison());
+        let m = &stats.outbound.ipv4_mismatch;
+        assert_eq!(
+            (
+                m.zero_field,
+                m.nonzero_field,
+                m.helper_same,
+                m.helper_different,
+                m.helper_unavailable
+            ),
+            (1, 2, 1, 1, 1)
+        );
         let json = serde_json::to_string(&stats).unwrap();
         assert!(!json.contains("192.0.2.1"));
         assert!(!json.contains("616263"));

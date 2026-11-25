@@ -1,4 +1,8 @@
 //! Консервативная проверка байтов и метаданных WinDivert 2.2.
+//! В исходниках драйвера 2.2.2 исходящие флаги образуются из NBL transmit
+//! checksum metadata, а WinDivertSend может пересчитать флаги со значением 0:
+//! https://github.com/basil00/WinDivert/blob/v2.2.2/sys/windivert.c
+//! Это не независимая проверка checksum и не доказательство побайтового wire.
 //! Не устанавливает подлинность пакета, выбранную цель или отсутствие LSO.
 //! Непроверенные offload-пакеты остаются неизменёнными; они не доказательство.
 use super::address::WinDivertAddress;
@@ -67,7 +71,10 @@ pub fn inspect(raw: &[u8], addr: &WinDivertAddress) -> Result<Check, Error> {
 
 /// До появления надёжного подтверждения отсутствия LSO и принадлежности потоку
 /// никакой результат inspect не разрешает активное преобразование. Адрес при
-/// отправке остаётся оригинальным в packet_loop.
+/// вызове send остаётся оригинальным в packet_loop, однако WinDivert 2.2 может
+/// сам пересчитывать checksum при снятых флагах; wire-байты не гарантируются.
+/// При флаге IPv4=1 и неверных байтах драйвер может не исправить этот заголовок.
+/// Не подключать к живому активному пути до проверки внешнего pass-through.
 #[cfg(any(test, all(windows, target_arch = "x86_64")))]
 pub(crate) fn pass_through_while_lso_unknown(raw: &[u8]) -> Vec<Vec<u8>> {
     vec![raw.to_vec()]

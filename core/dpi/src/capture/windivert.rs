@@ -24,6 +24,7 @@ pub(super) type OpenFn = unsafe extern "C" fn(*const c_char, i32, i16, u64) -> H
 pub(super) type RecvFn =
     unsafe extern "C" fn(Handle, *mut c_void, u32, *mut u32, *mut c_void) -> i32;
 type SendFn = unsafe extern "C" fn(Handle, *const c_void, u32, *mut u32, *const c_void) -> i32;
+type CalcChecksumsFn = unsafe extern "C" fn(*mut c_void, u32, *mut c_void, u64) -> i32;
 pub(super) type ShutdownFn = unsafe extern "C" fn(Handle, i32) -> i32;
 pub(super) type CloseFn = unsafe extern "C" fn(Handle) -> i32;
 
@@ -79,6 +80,41 @@ impl Drop for Library {
             FreeLibrary(self.0);
         }
     }
+}
+
+/// Сравнение с официальной DLL на отдельной временной копии. Не открывает
+/// драйвер и не меняет исходные байты или WINDIVERT_ADDRESS; в результате
+/// только совпадение двух checksum, без адресов, checksum и payload.
+fn compare_ipv4_header_checksum(library: &Library, raw: &[u8]) -> io::Result<bool> {
+    if raw.len() < 40 || raw[0] != 0x45 || raw[9] != 6 || raw.len() > u32::MAX as usize {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "Неподдерживаемый IPv4 TCP пакет",
+        ));
+    }
+    let calc: CalcChecksumsFn =
+        unsafe { std::mem::transmute(library.symbol(b"WinDivertHelperCalcChecksums\0")?) };
+    let mut copy = raw.to_vec();
+    // NO_ICMP | NO_ICMPV6 | NO_TCP | NO_UDP: только заголовок IPv4.
+    let ok = unsafe {
+        calc(
+            copy.as_mut_ptr().cast(),
+            copy.len() as u32,
+            ptr::null_mut(),
+            2 | 4 | 8 | 16,
+        )
+    };
+    if ok == 0 {
+        return Err(io::Error::other(
+            "WinDivert не смог пересчитать IPv4 заголовок",
+        ));
+    }
+    if copy[..10] != raw[..10] || copy[12..] != raw[12..] {
+        return Err(io::Error::other(
+            "WinDivert изменил байты вне IPv4 checksum",
+        ));
+    }
+    Ok(copy[10..12] == raw[10..12])
 }
 
 /// Низкоуровневый пассивный канал. Сам по себе не запускает поток и не пишет логи.
@@ -207,6 +243,11 @@ impl Sniffer {
         }
         packet.truncate(length as usize);
         Ok((packet, address))
+    }
+
+    /// Для ограниченного пассивного сравнения на копии, не для reinjection.
+    pub(crate) fn compare_ipv4_checksum(&self, raw: &[u8]) -> io::Result<bool> {
+        compare_ipv4_header_checksum(&self._library, raw)
     }
 
     /// Можно вызвать из другого потока для завершения ожидающего receive.
@@ -402,6 +443,36 @@ impl Drop for DivertChannel {
 mod tests {
     use super::*;
     use std::ffi::CStr;
+
+    // Тест DLL на синтетических пакетах, без WinDivertOpen/драйвера.
+    #[test]
+    fn official_dll_and_rust_agree_on_ipv4_header_vectors() {
+        let path = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("driver")
+            .join("WinDivert.dll");
+        let library = Library::load(&path).unwrap();
+        let hex = "4500002b007b000040068e1bc0000201c63364029c4001bb00000064000001f5501804d25a090000616263";
+        let original: Vec<u8> = hex
+            .as_bytes()
+            .chunks_exact(2)
+            .map(|x| u8::from_str_radix(std::str::from_utf8(x).unwrap(), 16).unwrap())
+            .collect();
+        for index in [1, 4, 5, 8, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19] {
+            for value in [0, 1, 0x55, 0xff] {
+                let mut packet = original.clone();
+                packet[index] ^= value;
+                let before = packet.clone();
+                let native = compare_ipv4_header_checksum(&library, &packet).unwrap();
+                let rust = crate::traffic::checksum::tcp_checksums(&packet)
+                    .unwrap()
+                    .ipv4_header_valid
+                    .unwrap();
+                assert_eq!(native, rust, "различие при байте {index}, xor={value}");
+                assert_eq!(packet, before, "исходный пакет не должен изменяться");
+            }
+        }
+        assert!(compare_ipv4_header_checksum(&library, &original[..10]).is_err());
+    }
 
     // Проверяет только синтаксис фильтров через DLL: WinDivertOpen не вызывается.
     #[test]

@@ -54,7 +54,9 @@
     function direction(label, d = {}) {
       return [label, `Всего ${d.total ?? 0}; IPv4 ${d.ipv4 ?? 0}; IPv6 ${d.ipv6 ?? 0}; больше 1500 байт ${d.over_1500_bytes ?? 0}; не разобрано ${d.unsupported ?? 0}`, matrix("TCP", d.tcp_checksum), matrix("IPv4 заголовок (только IPv4)", d.ipv4_checksum)].join("\n");
     }
-    return ["UmbraNet — пассивная TCP-проверка", `Состояние: ${labels[view.phase] || "неизвестно"}; лимит ${view.duration_seconds ?? 30} с.`, "Охват: все приложения на web-портах, не только выбранные цели.", direction("Исходящие", view.tcp_stats?.outbound), direction("Входящие", view.tcp_stats?.inbound), "Размер >1500, флаги и суммы не доказывают наличие или отсутствие LSO; потери копий не измеряются."].join("\n\n");
+    const m = view.tcp_stats?.outbound?.ipv4_mismatch;
+    const comparison = m ? ["Исходящий IPv4, когда флаг=1, но наша сумма неверна:", `Поле checksum нулевое: ${m.zero_field ?? 0}; ненулевое: ${m.nonzero_field ?? 0}.`, `DLL WinDivert на временной копии (до 128 пакетов): после пересчёта checksum совпала с исходной ${m.helper_same ?? 0}; отличается ${m.helper_different ?? 0}; сравнить не удалось ${m.helper_unavailable ?? 0}.`, "Это сравнение двух расчётов, а не проверка пакета на проводе или доказательство причины расхождения."].join("\n") : "Сравнение IPv4 с DLL недоступно в этой версии.";
+    return ["UmbraNet — пассивная TCP-проверка", `Состояние: ${labels[view.phase] || "неизвестно"}; лимит ${view.duration_seconds ?? 30} с.`, "Охват: все приложения на web-портах, не только выбранные цели.", direction("Исходящие", view.tcp_stats?.outbound), direction("Входящие", view.tcp_stats?.inbound), comparison, "Размер >1500, флаги и суммы не доказывают наличие или отсутствие LSO; потери копий не измеряются."].join("\n\n");
   }
   function flowSummary(view) {
     return ["UmbraNet — пассивная проверка соединений", `Состояние: ${labels[view.phase] || "неизвестно"}`, `Новых соединений: ${view.established ?? 0}`, `Закрыто: ${view.deleted ?? 0}`, `Имя процесса получено: ${view.identified ?? 0}`, `Предварительно выбранный процесс: ${view.selected_process ?? 0}`, `Процесс не определён: ${view.unresolved ?? 0}`, `Неизвестных событий: ${view.ignored ?? 0}`, `Удалено событий из очереди: ${view.events_dropped ?? 0}`, "Проверка наблюдает новые соединения на указанных портах, включая другие приложения. Имя процесса предварительное; проверка не подтверждает обход, домены или голос."].join("\n");
@@ -184,7 +186,7 @@
   }
   loopbackStart.addEventListener("click", async () => {
     if (!ready || !probeReady || submitting || probeSubmitting || state?.busy || probe?.phase === "running" || probe?.blocked) return;
-    if (!window.confirm("Активная локальная проверка временно перехватит TCP к собственному тестовому порту и вернёт пакеты без изменений. Другая локальная программа тоже может подключиться к этому порту; возможна потеря пакетов. Может запуститься общий WinDivert, который тест не останавливает. Сохраните работу и закройте Zapret и другие программы WinDivert. Продолжить?")) return;
+    if (!window.confirm("Активная локальная проверка перехватит TCP к собственному тестовому порту и передаст исходные пакеты и адреса обратно в WinDivert. Сам WinDivert может пересчитать контрольные суммы. Другая локальная программа тоже может подключиться к этому порту; возможна потеря пакетов. Может запуститься общий WinDivert, который тест не останавливает. Сохраните работу и закройте Zapret и другие программы WinDivert. Продолжить?")) return;
     probeSubmitting = true; controls(); window.dispatchEvent(new Event("umbra-diagnostic-busy"));
     window.umbraJournal?.add("system", "Пользователь запустил локальную проверку возврата пакетов.");
     const sequence = ++probeSequence; probeApplied = sequence;

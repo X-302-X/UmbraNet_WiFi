@@ -57,22 +57,36 @@ impl TcpMetadataBackend {
         Self { dll_path }
     }
 }
-struct TcpMetadataObserver(crate::capture::windivert::Sniffer);
+struct TcpMetadataObserver {
+    sniffer: crate::capture::windivert::Sniffer,
+    budget: crate::diagnostics::tcp_stats::Ipv4SampleBudget,
+}
 impl Observer for TcpMetadataObserver {
     fn receive(&self) -> io::Result<Option<Observation>> {
         Err(io::Error::other("Неверный тип источника TCP-диагностики"))
     }
     fn receive_event(&self) -> io::Result<crate::diagnostics::session::DiagnosticEvent> {
-        let (packet, addr) = self.0.receive_with_address()?;
-        let facts = crate::diagnostics::tcp_stats::PacketFacts::from_packet(&packet, &addr);
+        use crate::diagnostics::tcp_stats::Ipv4NativeComparison;
+        let (packet, addr) = self.sniffer.receive_with_address()?;
+        let mut facts = crate::diagnostics::tcp_stats::PacketFacts::from_packet(&packet, &addr);
+        // Ограниченная выборка: DLL обрабатывает лишь временную копию, не сеть.
+        // Никакие адреса, checksum или payload не сохраняются в результат.
+        if facts.needs_ipv4_native_comparison() && self.budget.try_take() {
+            let comparison = match self.sniffer.compare_ipv4_checksum(&packet) {
+                Ok(true) => Ipv4NativeComparison::Same,
+                Ok(false) => Ipv4NativeComparison::Different,
+                Err(_) => Ipv4NativeComparison::Unavailable,
+            };
+            facts.set_ipv4_native_comparison(comparison);
+        }
         // packet/addr не покидают функцию и не попадают в View/журнал.
         Ok(crate::diagnostics::session::DiagnosticEvent::Tcp(facts))
     }
     fn shutdown(&self) -> io::Result<()> {
-        self.0.shutdown()
+        self.sniffer.shutdown()
     }
     fn close(&self) -> io::Result<()> {
-        self.0.close_checked()
+        self.sniffer.close_checked()
     }
 }
 impl Backend for TcpMetadataBackend {
@@ -80,9 +94,10 @@ impl Backend for TcpMetadataBackend {
         crate::diagnostics::session::Kind::TcpMetadata
     }
     fn open(&self, _: &CapturePlan) -> io::Result<Arc<dyn Observer>> {
-        Ok(Arc::new(TcpMetadataObserver(
-            crate::capture::windivert::Sniffer::open_tcp_metadata(&self.dll_path)?,
-        )))
+        Ok(Arc::new(TcpMetadataObserver {
+            sniffer: crate::capture::windivert::Sniffer::open_tcp_metadata(&self.dll_path)?,
+            budget: crate::diagnostics::tcp_stats::Ipv4SampleBudget::default(),
+        }))
     }
     fn process_name(&self, _: u32) -> io::Result<String> {
         Err(io::Error::other("Процессы в TCP-проверке не определяются"))
