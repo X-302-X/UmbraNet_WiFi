@@ -45,15 +45,61 @@
   let dpiRunning = null; // null = состояние не подтверждено
   let controlBusy = false;
   let stopUnconfirmed = false;
+  let faultNeedsStop = false;
+  let awaitingRecovery = false;
+  let dpiWatchTimer = null;
+  let watchError = null;
+  let recoveryNotified = false;
+
+  function scheduleDpiWatch() {
+    if (dpiWatchTimer !== null || (!awaitingRecovery && (dpiRunning !== true || stopUnconfirmed))) return;
+    dpiWatchTimer = setTimeout(watchDpi, 1500);
+  }
+  async function watchDpi() {
+    dpiWatchTimer = null;
+    if (!awaitingRecovery && (dpiRunning !== true || stopUnconfirmed)) return;
+    if (controlBusy) { scheduleDpiWatch(); return; }
+    try {
+      const control = parseStop(await invoke("dpi_control_status"));
+      if (controlBusy || (!awaitingRecovery && (dpiRunning !== true || stopUnconfirmed))) { scheduleDpiWatch(); return; }
+      if (awaitingRecovery) {
+        if (control.phase === "failed" && control.auto_fault && control.owned_closed) {
+          applyAutoFault(control);
+          renderMain();
+        } else scheduleDpiWatch();
+        return;
+      }
+      if (watchError) { window.umbraJournal?.add("system", "Доступ к состоянию DPI восстановлен."); watchError = null; }
+      if (control.phase === "recovering" && !recoveryNotified) {
+        const text = control.message || "Рабочий поток DPI завершился неожиданно; закрываем собственный канал.";
+        recoveryNotified = true;
+        window.umbraJournal?.add("error", text);
+        showNotice(text, true);
+      }
+      if (control.phase === "failed") {
+        if (control.auto_fault && control.owned_closed) applyAutoFault(control);
+        else applyStop(control);
+        renderMain();
+        return;
+      }
+    } catch (error) {
+      if (controlBusy || (!awaitingRecovery && (dpiRunning !== true || stopUnconfirmed))) { scheduleDpiWatch(); return; }
+      const text = `Не удалось получить состояние DPI: ${String(error)}`;
+      if (text !== watchError) window.umbraJournal?.add("error", text);
+      watchError = text;
+      showNotice(text, true);
+    }
+    scheduleDpiWatch();
+  }
 
   function renderMain() {
-    const stopping = currentMode === "dpi" && dpiRunning === true;
-    const unknown = currentMode === "dpi" && (dpiRunning === null || stopUnconfirmed);
+    const stopping = currentMode === "dpi" && (dpiRunning === true || faultNeedsStop);
+    const unknown = currentMode === "dpi" && !faultNeedsStop && (dpiRunning === null || stopUnconfirmed);
     mainButton.dataset.state = stopping ? "stop" : "start";
     mainButton.firstChild.textContent = stopping ? "■ " : "▶ ";
     mainText.textContent = unknown ? "Проверить состояние" : stopping ? "Стоп" : "Старт";
     mainButton.disabled = controlBusy || (currentMode === "dpi" && stopUnconfirmed);
-    for (const button of modes) button.disabled = controlBusy || ((dpiRunning === true || stopUnconfirmed) && button.dataset.mode !== "dpi");
+    for (const button of modes) button.disabled = controlBusy || ((dpiRunning === true || stopUnconfirmed || faultNeedsStop) && button.dataset.mode !== "dpi");
   }
   function parseDpiView(raw) {
     const view = typeof raw === "string" ? JSON.parse(raw) : raw;
@@ -64,11 +110,12 @@
     if (typeof invoke !== "function") throw new Error("Управление DPI доступно только в приложении Windows");
     const view = parseDpiView(await invoke("dpi_strategy_list"));
     dpiRunning = view.running;
+    scheduleDpiWatch();
     return view;
   }
   function parseStop(value) {
     const view = typeof value === "string" ? JSON.parse(value) : value;
-    if (!view || !["idle", "stopping", "complete", "failed"].includes(view.phase) || typeof view.owned_closed !== "boolean") {
+    if (!view || !["idle", "stopping", "recovering", "complete", "failed"].includes(view.phase) || typeof view.owned_closed !== "boolean") {
       throw new Error("Неизвестное состояние общей остановки");
     }
     return view;
@@ -82,7 +129,18 @@
     }
     return view;
   }
+  function applyAutoFault(view) {
+    dpiRunning = false;
+    stopUnconfirmed = false;
+    faultNeedsStop = true;
+    awaitingRecovery = false;
+    const text = `DPI завершился с ошибкой: ${view.message || "неизвестная ошибка"}. Нажмите «Стоп», чтобы попытаться остановить общую службу WinDivert.`;
+    window.umbraJournal?.addRequired("error", text);
+    showNotice(text, true);
+  }
   function applyStop(view) {
+    faultNeedsStop = false;
+    awaitingRecovery = false;
     if (view.phase === "complete" && view.owned_closed && ["stopped", "absent"].includes(view.service_status)) {
       dpiRunning = false;
       stopUnconfirmed = false;
@@ -97,6 +155,7 @@
     const text = `Остановка DPI не подтверждена: ${view.message || "неизвестное состояние"}`;
     window.umbraJournal?.addRequired("error", text);
     if (view.owned_closed) window.umbraJournal?.stopAfterDpi();
+    else { awaitingRecovery = true; scheduleDpiWatch(); }
     showNotice(text, true);
   }
   mainButton.addEventListener("click", async () => {
@@ -108,20 +167,42 @@
     if (stopUnconfirmed) return;
     controlBusy = true;
     const expected = dpiRunning;
-    const intendedStop = expected === true;
+    const faultStop = faultNeedsStop;
+    const intendedStop = expected === true || faultStop;
     if (intendedStop) window.umbraJournal?.addRequired("system", "Пользователь нажал «Стоп» DPI.");
     let sent = null;
     renderMain();
     try {
-      // Если состояние изменилось, не выполнять действие, отличное от надписи на кнопке.
-      const before = await readDpiState();
-      if (expected === null || expected !== before.running) {
-        const text = "Состояние DPI обновлено. Проверьте кнопку и нажмите её ещё раз.";
-        if (intendedStop) window.umbraJournal?.addRequired("system", `Команда остановки не отправлена: ${text}`);
-        showNotice(text);
-        return;
+      // После автоошибки worker уже не работает, но Stop ещё должен попытаться
+      // остановить общую службу. Мост проверяет, что свой канал точно закрыт.
+      let stopping = faultStop;
+      if (!faultStop) {
+        // Не выполнять действие, отличное от надписи на кнопке.
+        const before = await readDpiState();
+        if (expected === true && before.running === false) {
+          // Рабочий поток мог завершиться между показом кнопки и нажатием.
+          window.umbraJournal?.addRequired("system", "Команда остановки пока не отправлена: проверяем аварийное состояние DPI.");
+          const control = parseStop(await invoke("dpi_control_status"));
+          if (control.phase === "failed") {
+            if (control.auto_fault && control.owned_closed) applyAutoFault(control);
+            else applyStop(control);
+          } else {
+            dpiRunning = null;
+            stopUnconfirmed = true;
+            const text = "Поток DPI больше не запущен; закрытие ресурсов не подтверждено.";
+            window.umbraJournal?.addRequired("error", text);
+            showNotice(text, true);
+          }
+          return;
+        }
+        if (expected === null || expected !== before.running) {
+          const text = "Состояние DPI обновлено. Проверьте кнопку и нажмите её ещё раз.";
+          if (intendedStop) window.umbraJournal?.addRequired("system", `Команда остановки не отправлена: ${text}`);
+          showNotice(text);
+          return;
+        }
+        stopping = before.running;
       }
-      const stopping = before.running;
       sent = stopping ? "stop" : "start";
       if (!stopping) window.umbraJournal?.add("system", "Пользователь нажал «Старт» DPI.");
       if (stopping) {
@@ -133,6 +214,8 @@
       dpiRunning = after.running;
       if (after.last_error) throw new Error(after.last_error);
       if (!after.running) throw new Error("DPI не запущен.");
+      recoveryNotified = false;
+      scheduleDpiWatch();
       showNotice("DPI запущен.");
       window.umbraJournal?.startForDpi();
       window.umbraJournal?.add("system", "DPI запущен.");
@@ -144,7 +227,10 @@
       if (sent === "stop") {
         // Текущий список стратегий не подтверждает закрытие ресурсов или службы.
         stopUnconfirmed = true;
+        faultNeedsStop = false;
         dpiRunning = null;
+        awaitingRecovery = true;
+        scheduleDpiWatch();
       } else {
         try { await readDpiState(); } catch (_) { dpiRunning = null; }
       }
@@ -168,7 +254,7 @@
   }
 
   for (const button of modes) button.addEventListener("click", async () => {
-    if (controlBusy || ((dpiRunning === true || stopUnconfirmed) && button.dataset.mode !== "dpi")) return;
+    if (controlBusy || ((dpiRunning === true || stopUnconfirmed || faultNeedsStop) && button.dataset.mode !== "dpi")) return;
     currentMode = button.dataset.mode;
     renderRoutePicker();
     renderMain();
@@ -179,6 +265,7 @@
         try {
           const control = parseStop(await invoke("dpi_control_status"));
           if (control.phase === "stopping") applyStop(await waitStop(control));
+          else if (control.phase === "failed" && control.auto_fault && control.owned_closed) applyAutoFault(control);
           else if (control.phase === "failed") applyStop(control);
           else await readDpiState();
         }
