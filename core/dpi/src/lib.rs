@@ -9,6 +9,7 @@ pub mod flow;
 pub mod journal_store;
 pub mod layout;
 pub mod lifecycle;
+pub mod loopback_job;
 pub mod profiles;
 pub mod safety;
 pub mod selection;

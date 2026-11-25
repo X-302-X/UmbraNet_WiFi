@@ -1,0 +1,29 @@
+# Application logs may contain sensitive diagnostic information.
+/logs/
+
+# Local secrets and Python environments.
+.env
+.env.*
+.venv/
+__pycache__/
+*.py[cod]
+
+# JavaScript and Rust build output.
+node_modules/
+/src-tauri/target/
+
+/core/dpi/target/
+
+# User-generated DPI selections and derived host list.
+/core/dpi/selection.json
+/core/dpi/active-domains.txt
+/core/dpi/autohostlist.txt
+/strtegs_Uz/autohostlist.txt
+/strtegs_Uz/selected-strategy.txt
+
+# Generated portable runtime data (source files remain in core/dpi).
+/data/
+
+# Temporary payload and target for the custom installer build.
+/src-tauri/installer-app/src-tauri/resources/
+/src-tauri/installer-app/src-tauri/target/

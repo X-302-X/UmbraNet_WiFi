@@ -61,8 +61,21 @@ struct StopView {
     owned_closed: bool,
     auto_fault: bool,
     service_status: Option<&'static str>,
+    probe_phase: &'static str,
+    probe_message: Option<String>,
+    probe_blocked: bool,
 }
 impl StopView {
+    fn check_probe_clear(&self) -> Result<(), String> {
+        if self.probe_phase == "running" || self.probe_blocked {
+            Err("Loopback-проверка выполняется или её закрытие не подтверждено; остальные операции WinDivert заблокированы".into())
+        } else {
+            Ok(())
+        }
+    }
+    fn probe_json(&self) -> serde_json::Value {
+        serde_json::json!({"phase": self.probe_phase, "message": self.probe_message, "blocked": self.probe_blocked})
+    }
     fn json(&self) -> serde_json::Value {
         serde_json::json!({"phase":self.phase, "message":self.message,
             "owned_closed":self.owned_closed, "auto_fault":self.auto_fault, "service_status":self.service_status})
@@ -73,6 +86,12 @@ pub struct DiagnosticState(
     Arc<Mutex<StopView>>,
 );
 impl DiagnosticState {
+    pub fn probe_running_or_unknown(&self) -> bool {
+        self.1
+            .lock()
+            .map(|gate| gate.probe_phase == "running")
+            .unwrap_or(true)
+    }
     pub fn new() -> Self {
         Self(
             Arc::new(umbranet_dpi::diagnostics::session::Diagnostics::new(
@@ -84,6 +103,9 @@ impl DiagnosticState {
                 owned_closed: false,
                 auto_fault: false,
                 service_status: None,
+                probe_phase: "idle",
+                probe_message: None,
+                probe_blocked: false,
             })),
         )
     }
@@ -106,6 +128,90 @@ pub fn dpi_diagnostic_status(
 }
 
 #[tauri::command]
+pub fn dpi_loopback_status(state: State<'_, DiagnosticState>) -> Result<serde_json::Value, String> {
+    state
+        .1
+        .lock()
+        .map(|gate| gate.probe_json())
+        .map_err(|_| "Состояние loopback-проверки недоступно".into())
+}
+
+/// Ручной opt-in тест в отдельном процессе, без запуска DPI.
+#[tauri::command]
+pub fn dpi_loopback_start(
+    diagnostic: State<'_, DiagnosticState>,
+    strategy: State<'_, StrategyState>,
+) -> Result<serde_json::Value, String> {
+    #[cfg(all(windows, target_arch = "x86_64"))]
+    {
+        let mut gate = diagnostic
+            .1
+            .lock()
+            .map_err(|_| "Состояние общей остановки недоступно".to_string())?;
+        gate.check_probe_clear()?;
+        if matches!(gate.phase, "stopping" | "recovering" | "failed") {
+            return Err("Предыдущая остановка DPI не подтверждена".into());
+        }
+        let view = diagnostic.0.view()?;
+        if view.busy
+            || matches!(
+                view.phase,
+                umbranet_dpi::diagnostics::session::Phase::Error
+                    | umbranet_dpi::diagnostics::session::Phase::StopFailed
+            )
+        {
+            return Err("Сначала завершите пассивную проверку и устраните её ошибки".into());
+        }
+        let inner = strategy.try_lock()?;
+        if inner.running_id.is_some()
+            || inner.channel.is_some()
+            || inner.worker.is_some()
+            || inner.supervisor.is_some()
+            || inner.stop.is_some()
+        {
+            return Err("Сначала полностью остановите DPI".into());
+        }
+        let dll = AppPaths::new(&app_root()?).driver_dll();
+        let helper = dll
+            .parent()
+            .ok_or("Не найдена папка драйвера")?
+            .join("loopback_probe.exe");
+        gate.probe_phase = "running";
+        gate.probe_message = Some("Выполняется локальная проверка в отдельном процессе".into());
+        let shared = diagnostic.1.clone();
+        let spawn = std::thread::Builder::new().name("umbra-loopback-supervisor".into()).spawn(move || {
+            let result = std::panic::catch_unwind(|| umbranet_dpi::loopback_job::run(&helper, std::time::Duration::from_secs(40)));
+            if let Ok(mut gate) = shared.lock() {
+                match result {
+                    Ok(outcome) => {
+                        gate.probe_phase = if outcome.success { "finished" } else { "error" };
+                        gate.probe_blocked = outcome.spawned && !outcome.success;
+                        gate.probe_message = Some(outcome.detail);
+                    }
+                    Err(_) => {
+                        gate.probe_phase = "error";
+                        gate.probe_blocked = true;
+                        gate.probe_message = Some("Ошибка наблюдения за тестом; процесс и закрытие WinDivert не подтверждены".into());
+                    }
+                }
+            }
+        });
+        if let Err(e) = spawn {
+            gate.probe_phase = "error";
+            gate.probe_message = Some(format!("Не удалось создать поток запуска проверки: {e}"));
+            return Err(gate.probe_message.clone().unwrap());
+        }
+        drop(inner);
+        Ok(gate.probe_json())
+    }
+    #[cfg(not(all(windows, target_arch = "x86_64")))]
+    {
+        let _ = (diagnostic, strategy);
+        Err("Loopback-проверка доступна только в Windows x64".into())
+    }
+}
+
+#[tauri::command]
 pub fn dpi_diagnostic_clear_events(state: State<'_, DiagnosticState>) -> Result<(), String> {
     state.0.clear_events()
 }
@@ -123,6 +229,7 @@ pub async fn dpi_diagnostic_start(
             .1
             .lock()
             .map_err(|_| "Состояние общей остановки недоступно".to_string())?;
+        gate.check_probe_clear()?;
         if matches!(gate.phase, "stopping" | "recovering" | "failed") {
             return Err("Общая остановка не подтверждена; диагностика заблокирована".into());
         }
@@ -161,6 +268,7 @@ pub async fn dpi_tcp_diagnostic_start(
             .1
             .lock()
             .map_err(|_| "Состояние общей остановки недоступно".to_string())?;
+        gate.check_probe_clear()?;
         if matches!(gate.phase, "stopping" | "recovering" | "failed") {
             return Err("Общая остановка не подтверждена; диагностика заблокирована".into());
         }
@@ -338,7 +446,12 @@ pub fn dpi_strategy_list(state: State<'_, StrategyState>) -> Result<String, Stri
 #[tauri::command]
 pub fn dpi_strategy_select(state: State<'_, StrategyState>, id: String) -> Result<String, String> {
     let mut inner = state.try_lock()?;
-    if inner.running_id.is_some() || inner.channel.is_some() || inner.worker.is_some() || inner.supervisor.is_some() || inner.stop.is_some() {
+    if inner.running_id.is_some()
+        || inner.channel.is_some()
+        || inner.worker.is_some()
+        || inner.supervisor.is_some()
+        || inner.stop.is_some()
+    {
         return Err("Сначала полностью остановите DPI, затем меняйте стратегию".into());
     }
     {
@@ -369,6 +482,7 @@ pub async fn dpi_engine_start(
             .1
             .lock()
             .map_err(|_| "Состояние общей остановки недоступно".to_string())?;
+        gate.check_probe_clear()?;
         if matches!(gate.phase, "stopping" | "recovering" | "failed") {
             return Err("Предыдущая остановка DPI не подтверждена".into());
         }
@@ -490,6 +604,9 @@ pub async fn dpi_engine_start(
             owned_closed: false,
             auto_fault: false,
             service_status: None,
+            probe_phase: "idle",
+            probe_message: None,
+            probe_blocked: false,
         };
         Ok(build_view(&mut inner).to_json())
     }
@@ -516,11 +633,18 @@ fn run_common_stop(
             .map_err(|_| "Состояние DPI недоступно".to_string())?;
         let flag = inner.stop.clone().ok_or("Нет флага остановки DPI")?;
         let channel = inner.channel.clone().ok_or("Нет канала DPI")?;
-        let supervisor = inner.supervisor.clone().ok_or("Нет координатора остановки DPI")?;
-        if inner.worker.is_none() { return Err("Нет потока DPI".into()); }
+        let supervisor = inner
+            .supervisor
+            .clone()
+            .ok_or("Нет координатора остановки DPI")?;
+        if inner.worker.is_none() {
+            return Err("Нет потока DPI".into());
+        }
         // Владельца выбираем только после успешного создания потока Stop.
         let claim = supervisor.reserve_user_stop();
-        if claim == StopClaim::AlreadyClaimed { return Err("Владелец остановки DPI уже выбран".into()); }
+        if claim == StopClaim::AlreadyClaimed {
+            return Err("Владелец остановки DPI уже выбран".into());
+        }
         let worker = inner.worker.take().ok_or("Нет потока DPI")?;
         (flag, channel, worker, supervisor, claim)
     };
@@ -600,6 +724,7 @@ pub fn dpi_engine_stop(
             .1
             .lock()
             .map_err(|_| "Состояние общей остановки недоступно".to_string())?;
+        gate.check_probe_clear()?;
         if gate.phase == "stopping" {
             return Ok(gate.json());
         }
@@ -623,7 +748,11 @@ pub fn dpi_engine_stop(
                     "Активная сессия DPI не запущена; общая служба не останавливалась".into(),
                 );
             }
-            if inner.stop.is_none() || inner.channel.is_none() || inner.worker.is_none() || inner.supervisor.is_none() {
+            if inner.stop.is_none()
+                || inner.channel.is_none()
+                || inner.worker.is_none()
+                || inner.supervisor.is_none()
+            {
                 gate.phase = "failed";
                 gate.message =
                     Some("Состояние ресурсов DPI неполное; остановка не подтверждена".into());
@@ -636,6 +765,9 @@ pub fn dpi_engine_stop(
             owned_closed: false,
             auto_fault: false,
             service_status: None,
+            probe_phase: "idle",
+            probe_message: None,
+            probe_blocked: false,
         };
         let strategy = state.inner.clone();
         let diagnostics = diagnostic.0.clone();
@@ -684,4 +816,22 @@ pub fn dpi_autohostlist_clear(state: State<'_, StrategyState>) -> Result<String,
     auto.clear()?;
     inner.auto_domains = Vec::new();
     Ok(build_view(&mut inner).to_json())
+}
+
+#[cfg(test)]
+mod loopback_gate_tests {
+    use super::*;
+    #[test]
+    fn running_and_unconfirmed_probe_exclude_other_windivert_operations() {
+        let state = DiagnosticState::new();
+        let mut gate = state.1.lock().unwrap();
+        assert!(gate.check_probe_clear().is_ok());
+        gate.probe_phase = "running";
+        assert!(gate.check_probe_clear().is_err());
+        gate.probe_phase = "error";
+        gate.probe_blocked = true;
+        assert!(gate.check_probe_clear().is_err());
+        gate.probe_blocked = false;
+        assert!(gate.check_probe_clear().is_ok());
+    }
 }
