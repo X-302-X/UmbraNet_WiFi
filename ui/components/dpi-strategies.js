@@ -55,6 +55,12 @@
       id.className = "strategy-id";
       id.textContent = item.id;
       row.append(name, id);
+      if (item.implementation_pending) {
+        const badge = document.createElement("span");
+        badge.className = "strategy-badge";
+        badge.textContent = "подключение не завершено";
+        row.append(badge);
+      }
       if (item.id === view.running_id) {
         const badge = document.createElement("span");
         badge.className = "strategy-badge";

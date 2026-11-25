@@ -22,6 +22,7 @@
   !insertmacro UMBRA_INSTALL_STRATEGY "voice" "discord-voice.json"
   !insertmacro UMBRA_INSTALL_STRATEGY "quic" "quic-bypass.json"
   !insertmacro UMBRA_INSTALL_STRATEGY "yt" "youtube-discord-ultra.json"
+  !insertmacro UMBRA_INSTALL_STRATEGY "uz1" "uz1.json"
   SetOutPath "$INSTDIR"
 !macroend
 
