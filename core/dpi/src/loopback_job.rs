@@ -93,7 +93,7 @@ pub fn run(executable: &Path, timeout: Duration) -> Outcome {
             if status.success() {
                 "Проверка процесса завершилась успешно.".to_string()
             } else {
-                format!("Тестовый процесс завершился с ошибкой ({status}); закрытие WinDivert не подтверждено.")
+                format!("Тестовый процесс завершился с ошибкой ({status}); состояние закрытия смотрите в подробностях, при отсутствии подтверждения оно неизвестно.")
             },
             if parts.is_empty() {
                 String::new()
@@ -135,6 +135,16 @@ mod tests {
         use std::os::unix::fs::PermissionsExt;
         let dir = std::env::temp_dir().join(format!("umbra-probe-test-{}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
+        let failure = dir.join("failure");
+        std::fs::write(
+            &failure,
+            "#!/bin/sh\necho 'shutdown ok; close ok' >&2\nexit 1\n",
+        )
+        .unwrap();
+        std::fs::set_permissions(&failure, std::fs::Permissions::from_mode(0o700)).unwrap();
+        let result = run(&failure, Duration::from_secs(2));
+        assert!(!result.success && result.detail.contains("close ok"));
+        assert!(!result.detail.contains("закрытие WinDivert не подтверждено"));
         let p = dir.join("hang");
         std::fs::write(&p, "#!/bin/sh\nexec sleep 5\n").unwrap();
         std::fs::set_permissions(&p, std::fs::Permissions::from_mode(0o700)).unwrap();
