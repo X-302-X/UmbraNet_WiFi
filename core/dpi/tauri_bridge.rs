@@ -56,15 +56,16 @@ pub async fn dpi_apply(
 
 #[derive(Clone)]
 struct StopView {
-    phase: &'static str, // idle, stopping, complete, failed
+    phase: &'static str, // idle, recovering, stopping, complete, failed
     message: Option<String>,
     owned_closed: bool,
+    auto_fault: bool,
     service_status: Option<&'static str>,
 }
 impl StopView {
     fn json(&self) -> serde_json::Value {
         serde_json::json!({"phase":self.phase, "message":self.message,
-            "owned_closed":self.owned_closed, "service_status":self.service_status})
+            "owned_closed":self.owned_closed, "auto_fault":self.auto_fault, "service_status":self.service_status})
     }
 }
 pub struct DiagnosticState(
@@ -81,6 +82,7 @@ impl DiagnosticState {
                 phase: "idle",
                 message: None,
                 owned_closed: false,
+                auto_fault: false,
                 service_status: None,
             })),
         )
@@ -121,7 +123,7 @@ pub async fn dpi_diagnostic_start(
             .1
             .lock()
             .map_err(|_| "Состояние общей остановки недоступно".to_string())?;
-        if matches!(gate.phase, "stopping" | "failed") {
+        if matches!(gate.phase, "stopping" | "recovering" | "failed") {
             return Err("Общая остановка не подтверждена; диагностика заблокирована".into());
         }
         let (plan, selected) = {
@@ -159,13 +161,14 @@ pub async fn dpi_tcp_diagnostic_start(
             .1
             .lock()
             .map_err(|_| "Состояние общей остановки недоступно".to_string())?;
-        if matches!(gate.phase, "stopping" | "failed") {
+        if matches!(gate.phase, "stopping" | "recovering" | "failed") {
             return Err("Общая остановка не подтверждена; диагностика заблокирована".into());
         }
         let inner = strategy.try_lock()?;
         if inner.running_id.is_some()
             || inner.channel.is_some()
             || inner.worker.is_some()
+            || inner.supervisor.is_some()
             || inner.stop.is_some()
         {
             return Err("Сначала полностью остановите активный DPI".into());
@@ -261,6 +264,7 @@ struct StrategyInner {
     stop: Option<Arc<AtomicBool>>,
     channel: Option<SharedChannel>,
     worker: Option<umbranet_dpi::capture::active_stop::Worker>,
+    supervisor: Option<Arc<umbranet_dpi::capture::active_supervisor::Supervisor>>,
     events: Option<std::sync::mpsc::Receiver<String>>,
     running_id: Option<String>,
     last_error: Option<String>,
@@ -282,6 +286,7 @@ impl StrategyState {
                 stop: None,
                 channel: None,
                 worker: None,
+                supervisor: None,
                 events: None,
                 running_id: None,
                 last_error: None,
@@ -332,8 +337,8 @@ pub fn dpi_strategy_list(state: State<'_, StrategyState>) -> Result<String, Stri
 #[tauri::command]
 pub fn dpi_strategy_select(state: State<'_, StrategyState>, id: String) -> Result<String, String> {
     let mut inner = state.try_lock()?;
-    if inner.running_id.is_some() {
-        return Err("Сначала остановите обход, затем меняйте стратегию".into());
+    if inner.running_id.is_some() || inner.channel.is_some() || inner.worker.is_some() || inner.supervisor.is_some() || inner.stop.is_some() {
+        return Err("Сначала полностью остановите DPI, затем меняйте стратегию".into());
     }
     {
         let profiles = match &inner.profiles {
@@ -363,7 +368,7 @@ pub async fn dpi_engine_start(
             .1
             .lock()
             .map_err(|_| "Состояние общей остановки недоступно".to_string())?;
-        if matches!(gate.phase, "stopping" | "failed") {
+        if matches!(gate.phase, "stopping" | "recovering" | "failed") {
             return Err("Предыдущая остановка DPI не подтверждена".into());
         }
         if diagnostic.0.view()?.busy {
@@ -371,8 +376,8 @@ pub async fn dpi_engine_start(
         }
         // Обе блокировки держатся одновременно, поэтому выбранный профиль и
         // цели фиксируются вместе, до открытия канала и запуска рабочего потока.
+        let mut inner = state.try_lock()?;
         let (id, plan, dll) = {
-            let mut inner = state.try_lock()?;
             if inner.running_id.is_some() {
                 return Ok(build_view(&mut inner).to_json());
             }
@@ -403,26 +408,77 @@ pub async fn dpi_engine_start(
         let channel = match umbranet_dpi::capture::windivert::DivertChannel::open(&dll, filter) {
             Ok(channel) => Arc::new(channel),
             Err(e) => {
-                let mut inner = state.try_lock()?;
                 inner.last_error = Some(format!("Не удалось открыть WinDivert: {e}"));
                 return Ok(build_view(&mut inner).to_json());
             }
         };
 
         let stop = Arc::new(AtomicBool::new(false));
+        let supervisor = Arc::new(umbranet_dpi::capture::active_supervisor::Supervisor::new());
         let thread_stop = Arc::clone(&stop);
         let thread_channel = Arc::clone(&channel);
+        let thread_supervisor = Arc::clone(&supervisor);
+        let thread_gate = Arc::clone(&diagnostic.1);
+        let thread_strategy = Arc::clone(&state.inner);
         let (events_tx, events_rx) = std::sync::mpsc::channel::<String>();
-        let handle = std::thread::spawn(move || {
-            engine
-                .run_channel_with_events(&thread_channel, &thread_stop, Some(events_tx))
-                .map_err(|error| error.to_string())
-        });
+        let handle = match std::thread::Builder::new().name("umbra-dpi-worker".into()).spawn(move || {
+            let result = match std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                engine.run_channel(&thread_channel, &thread_stop)
+            })) {
+                Ok(result) => result.map_err(|error| error.to_string()),
+                Err(_) => Err("panic рабочего потока DPI".to_string()),
+            };
+            if let Some(report) = thread_supervisor.finish_worker(&*thread_channel, &thread_stop, &result, || {
+                if let Ok(mut gate) = thread_gate.lock() {
+                    if gate.phase == "idle" {
+                        gate.phase = "recovering";
+                        gate.message = Some("Рабочий поток DPI завершился неожиданно; закрываем собственный канал".into());
+                    }
+                }
+            }) {
+                let _ = events_tx.send(report.message.clone());
+                // Если пользователь уже запросил Stop, итог установит его поток.
+                // Порядок блокировок совпадает с запуском и остановкой: gate → strategy.
+                if let Ok(mut gate) = thread_gate.lock() {
+                    if gate.phase == "recovering" || gate.phase == "idle" || gate.phase == "failed" || (gate.phase == "stopping" && report.after_failed_user_shutdown) {
+                        let stopping = gate.phase == "stopping";
+                        let previous = gate.message.take();
+                        if !stopping { gate.phase = "failed"; }
+                        gate.owned_closed = report.owned_closed;
+                        gate.auto_fault = true;
+                        gate.message = Some(match previous { Some(text) => format!("{text}; {}", report.message), None => report.message.clone() });
+                        if let Ok(mut strategy) = thread_strategy.lock() {
+                            strategy.last_error = Some(report.message.clone());
+                            strategy.running_id = None;
+                        }
+                    }
+                }
+                Err(report.message)
+            } else {
+                if let Err(error) = &result { let _ = events_tx.send(format!("Движок остановлен: {error}")); }
+                result
+            }
+        }) {
+            Ok(handle) => handle,
+            Err(error) => {
+                // Поток не создан; только этот поток владеет каналом.
+                use umbranet_dpi::capture::active_stop::ActiveChannel;
+                let shutdown = channel.shutdown_recv();
+                let close = channel.close_checked();
+                let message = format!("Не удалось создать поток DPI: {error}; shutdown: {}; close: {}", shutdown.err().map_or_else(|| "ok".into(), |e| e.to_string()), close.as_ref().err().map_or_else(|| "ok".into(), |e| e.to_string()));
+                gate.phase = "failed";
+                gate.owned_closed = close.is_ok();
+                gate.message = Some(message.clone());
+                inner.last_error = Some(message.clone());
+                if close.is_err() { inner.channel = Some(channel); }
+                return Err(message);
+            }
+        };
 
-        let mut inner = state.try_lock()?;
         inner.stop = Some(stop);
         inner.channel = Some(channel);
         inner.worker = Some(handle);
+        inner.supervisor = Some(supervisor);
         inner.events = Some(events_rx);
         inner.auto_domains = auto_domains;
         inner.running_id = Some(id);
@@ -431,6 +487,7 @@ pub async fn dpi_engine_start(
             phase: "idle",
             message: None,
             owned_closed: false,
+            auto_fault: false,
             service_status: None,
         };
         Ok(build_view(&mut inner).to_json())
@@ -450,17 +507,23 @@ fn run_common_stop(
     diagnostics: Arc<umbranet_dpi::diagnostics::session::Diagnostics>,
     control: Arc<Mutex<StopView>>,
 ) -> Result<(Option<String>, &'static str), String> {
-    use umbranet_dpi::capture::active_stop::{self, Outcome};
-    let (flag, channel, worker) = {
+    use umbranet_dpi::capture::active_stop::Outcome;
+    use umbranet_dpi::capture::active_supervisor::StopClaim;
+    let (flag, channel, worker, supervisor, claim) = {
         let mut inner = strategy
             .lock()
             .map_err(|_| "Состояние DPI недоступно".to_string())?;
         let flag = inner.stop.clone().ok_or("Нет флага остановки DPI")?;
         let channel = inner.channel.clone().ok_or("Нет канала DPI")?;
+        let supervisor = inner.supervisor.clone().ok_or("Нет координатора остановки DPI")?;
+        if inner.worker.is_none() { return Err("Нет потока DPI".into()); }
+        // Владельца выбираем только после успешного создания потока Stop.
+        let claim = supervisor.reserve_user_stop();
+        if claim == StopClaim::AlreadyClaimed { return Err("Владелец остановки DPI уже выбран".into()); }
         let worker = inner.worker.take().ok_or("Нет потока DPI")?;
-        (flag, channel, worker)
+        (flag, channel, worker, supervisor, claim)
     };
-    let worker_error = match active_stop::stop_owned(&*channel, &flag, worker) {
+    let worker_error = match supervisor.stop(claim, &*channel, &flag, worker) {
         Outcome::ShutdownFailed { worker, error } => {
             // Сохраняем handle даже при ошибке shutdown. Поток может ещё работать;
             // его результат нельзя объявить успешным или потерять.
@@ -484,6 +547,7 @@ fn run_common_stop(
             .map_err(|_| "Состояние DPI недоступно после закрытия".to_string())?;
         inner.channel = None;
         inner.stop = None;
+        inner.supervisor = None;
         inner.running_id = None;
         drain_events(&mut inner);
         inner.events = None;
@@ -538,7 +602,9 @@ pub fn dpi_engine_stop(
         if gate.phase == "stopping" {
             return Ok(gate.json());
         }
-        if gate.phase == "failed" {
+        // После подтверждённого автоматического закрытия та же кнопка Stop
+        // может явно запросить остановку общей службы. Не повторяем close handle.
+        if gate.phase == "failed" && !(gate.auto_fault && gate.owned_closed) {
             return Err(gate
                 .message
                 .clone()
@@ -549,13 +615,14 @@ pub fn dpi_engine_stop(
             if inner.running_id.is_none()
                 && inner.channel.is_none()
                 && inner.worker.is_none()
+                && inner.supervisor.is_none()
                 && inner.stop.is_none()
             {
                 return Err(
                     "Активная сессия DPI не запущена; общая служба не останавливалась".into(),
                 );
             }
-            if inner.stop.is_none() || inner.channel.is_none() || inner.worker.is_none() {
+            if inner.stop.is_none() || inner.channel.is_none() || inner.worker.is_none() || inner.supervisor.is_none() {
                 gate.phase = "failed";
                 gate.message =
                     Some("Состояние ресурсов DPI неполное; остановка не подтверждена".into());
@@ -566,6 +633,7 @@ pub fn dpi_engine_stop(
             phase: "stopping",
             message: None,
             owned_closed: false,
+            auto_fault: false,
             service_status: None,
         };
         let strategy = state.inner.clone();
@@ -594,7 +662,7 @@ pub fn dpi_engine_stop(
         });
         if let Err(error) = spawn {
             gate.phase = "failed";
-            gate.message = Some(format!("Не удалось запустить остановку DPI: {error}"));
+            gate.message = Some(format!("Не удалось запустить остановку DPI: {error}. Рабочий поток может продолжать работу; общая служба не останавливалась."));
             return Err(gate.message.clone().unwrap());
         }
         Ok(gate.json())

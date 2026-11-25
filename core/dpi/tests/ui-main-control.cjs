@@ -21,10 +21,12 @@ function make() {
   for (const name of ['#catalog-search','#catalog-empty','#action-notice','.action-start','.action-restart','#combo-tabs','#route-vpn','#route-dpi']) ids[name] = new Element();
   const modes = ['vpn','combo','dpi'].map(mode => new Element({mode}));
   const calls = [], entries = [];
-  let running = false, failQuery = false, successfulStop = false, stopStarted = false, stopFailsAfterClose = false;
+  let running = false, failQuery = false, successfulStop = false, stopStarted = false, stopFailsAfterClose = false, workerFault = false, autoFault = false, recovering = false, watchCallback = null;
   const invoke = async (name) => {
     calls.push(name);
     if (name === 'dpi_control_status') {
+      if (workerFault && !stopStarted) return {phase:'failed', owned_closed:true, auto_fault:autoFault, message:'неожиданное завершение; общий WinDivert не остановлен', service_status:null};
+      if (recovering && !stopStarted) return {phase:'recovering', owned_closed:false, message:'Рабочий поток завершился; закрываем канал', service_status:null};
       if (stopStarted) return stopFailsAfterClose
         ? {phase: 'failed', owned_closed: true, message: 'ошибка службы', service_status: null}
         : {phase: 'complete', owned_closed: true, message: null, service_status: 'stopped'};
@@ -48,8 +50,8 @@ function make() {
     getElementById: () => new Element(),
   };
   const window = { __TAURI_INTERNALS__: {invoke}, umbraJournal: {add: (...x) => entries.push(x), addRequired: (...x) => entries.push(x), stopAfterDpi: () => entries.push(["paused"])} };
-  vm.runInNewContext(source, {document, window, setTimeout: (fn, ms) => { if (ms === 600) queueMicrotask(fn); return 1; }, clearTimeout() {}});
-  return {ids, modes, calls, entries, setRunning(v) {running = v;}, fail(v) {failQuery = v;}, allowStop() {successfulStop = true;}, failAfterClose() {successfulStop = true; stopFailsAfterClose = true;}};
+  vm.runInNewContext(source, {document, window, setTimeout: (fn, ms) => { if (ms === 600) queueMicrotask(fn); if (ms === 1500) watchCallback = fn; return 1; }, clearTimeout() {}});
+  return {ids, modes, calls, entries, setRunning(v) {running = v;}, fail(v) {failQuery = v;}, allowStop() {successfulStop = true;}, failAfterClose() {successfulStop = true; stopFailsAfterClose = true;}, setWorkerFault() {workerFault = true;}, setAutoFault() {workerFault = true; autoFault = true;}, setRecovering() {recovering = true;}, async tickWatch() {assert(watchCallback); const cb=watchCallback; watchCallback=null; await cb();}};
 }
 (async () => {
   const t = make();
@@ -110,5 +112,45 @@ function make() {
   assert(err.entries.some(([type]) => type === 'paused'));
   assert.equal(err.ids['.action-start'].disabled, true);
 
-  console.log('Основная кнопка: старт, ожидание Stop, ошибки и журнал — OK');
+  const recovery = make(); recovery.setRunning(true); recovery.allowStop();
+  await recovery.modes[2].click(); recovery.setRecovering(); await recovery.tickWatch();
+  assert(recovery.entries.some(([type,text]) => type === 'error' && text.includes('закрываем канал')));
+  assert.equal(recovery.ids['.action-start'].child.textContent, 'Стоп');
+  await recovery.ids['.action-start'].click();
+  assert(recovery.calls.includes('dpi_engine_stop'), 'Stop доступен при автоочистке');
+
+  const delayed = make(); delayed.setRunning(true);
+  await delayed.modes[2].click(); await delayed.ids['.action-start'].click();
+  assert.equal(delayed.ids['.action-start'].disabled, true);
+  delayed.setAutoFault(); await delayed.tickWatch();
+  assert.equal(delayed.ids['.action-start'].disabled, false, 'после автоочистки Stop снова доступен');
+  delayed.allowStop(); await delayed.ids['.action-start'].click();
+  assert.equal(delayed.calls.filter(c => c === 'dpi_engine_stop').length, 2);
+
+  const auto = make(); auto.setRunning(true); auto.allowStop();
+  await auto.modes[2].click(); auto.setAutoFault(); await auto.tickWatch();
+  assert(auto.entries.some(([type,text]) => type === 'error' && text.includes('Нажмите «Стоп»')));
+  assert.equal(auto.ids['.action-start'].child.textContent, 'Стоп');
+  assert.equal(auto.ids['.action-start'].disabled, false);
+  auto.setRunning(false); await auto.ids['.action-start'].click();
+  assert(auto.calls.includes('dpi_engine_stop'), 'аварийное закрытие не отменяет последующий Stop общего драйвера');
+  assert(auto.entries.some(([type]) => type === 'paused'));
+
+  const race = make(); race.setRunning(true); race.allowStop();
+  await race.modes[2].click(); race.setAutoFault(); race.setRunning(false);
+  await race.ids['.action-start'].click();
+  assert(!race.calls.includes('dpi_engine_start'), 'при падении нельзя случайно запустить DPI');
+  assert(!race.calls.includes('dpi_engine_stop'), 'сначала уточнить аварийное состояние');
+  assert.equal(race.ids['.action-start'].child.textContent, 'Стоп');
+  await race.ids['.action-start'].click();
+  assert(race.calls.includes('dpi_engine_stop'));
+
+  const fault = make(); fault.setRunning(true);
+  await fault.modes[2].click();
+  fault.setWorkerFault(); await fault.tickWatch();
+  assert(fault.ids['#action-notice'].textContent.includes('неожиданное завершение'));
+  assert(fault.entries.some(([type,text]) => type === 'error' && text.includes('общий WinDivert не остановлен')));
+  assert(fault.entries.some(([type]) => type === 'paused'));
+  assert.equal(fault.ids['.action-start'].disabled, true);
+  console.log('Основная кнопка: старт, ожидание Stop, автоошибка и журнал — OK');
 })().catch(error => { console.error(error); process.exitCode = 1; });

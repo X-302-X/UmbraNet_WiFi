@@ -4,6 +4,7 @@ use crate::catalog::Catalog;
 use crate::selection::{Selection, Snapshot};
 
 pub mod active_stop;
+pub mod active_supervisor;
 pub mod address;
 #[cfg(any(test, all(windows, target_arch = "x86_64")))]
 mod io_guard;
